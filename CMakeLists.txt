@@ -14,6 +14,7 @@ find_package(Threads REQUIRED)
 find_package(Drogon CONFIG REQUIRED)
 
 find_package(TRDP CONFIG REQUIRED NAMES TRDP trdp)
+find_package(TinyXML2 REQUIRED)
 
 option(TRDP_USE_SHARED "Link against shared TRDP libraries" ON)
 
@@ -33,6 +34,10 @@ add_executable(trdp_config_check cmake/tests/trdp_config_check.cpp)
 target_link_libraries(trdp_config_check PRIVATE trdp_link)
 
 target_compile_definitions(trdp_config_check PRIVATE TRDP_DETECTION_ONLY)
+
+add_library(trdp_telegram_model STATIC src/telegram_model.cpp)
+target_include_directories(trdp_telegram_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(trdp_telegram_model PUBLIC TinyXML2::TinyXML2)
 
 include(GNUInstallDirs)
 install(TARGETS trdp_config_check drogon_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

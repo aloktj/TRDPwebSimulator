@@ -32,10 +32,13 @@ struct FieldDef {
     FieldType type{FieldType::BYTES};
     std::size_t offset{0};
     std::size_t size{0};
+    std::size_t bitOffset{0};
+    std::size_t arrayLength{1};
 };
 
 struct DatasetDef {
     std::string name;
+    std::size_t size{0};
     std::vector<FieldDef> fields;
 
     [[nodiscard]] const FieldDef *findField(const std::string &fieldName) const;
@@ -98,6 +101,7 @@ class TelegramRegistry {
 
     void registerDataset(const DatasetDef &dataset);
     void registerTelegram(const TelegramDef &telegram);
+    void clear();
 
     [[nodiscard]] std::optional<DatasetDef> getDatasetCopy(const std::string &name) const;
     [[nodiscard]] std::optional<TelegramDef> getTelegramCopy(std::uint32_t comId) const;
@@ -112,6 +116,10 @@ class TelegramRegistry {
     std::map<std::uint32_t, TelegramDef> telegrams;
     std::map<std::uint32_t, std::shared_ptr<TelegramRuntime>> runtimes;
 };
+
+bool loadFromTauXml(const std::string &xmlPath);
+void setDefaultXmlConfig(const std::string &xmlPath);
+bool ensureRegistryInitialized();
 
 } // namespace trdp
 
