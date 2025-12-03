@@ -10,6 +10,9 @@ list(APPEND CMAKE_PREFIX_PATH "/usr/lib/cmake")
 
 find_package(Threads REQUIRED)
 
+# Discover an existing Drogon installation (installed once per machine).
+find_package(Drogon CONFIG REQUIRED)
+
 find_package(TRDP CONFIG REQUIRED NAMES TRDP trdp)
 
 option(TRDP_USE_SHARED "Link against shared TRDP libraries" ON)

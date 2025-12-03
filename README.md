@@ -416,6 +416,16 @@ sudo dpkg -i binary/tcopentrdp-2.2.23-amd64.deb
 
 This installs headers under `/usr/include/trdp`, libraries under `/usr/lib` (`libtrdp`, `libtrdpap`, `libtau`), and CMake config files under `/usr/lib/cmake/TRDP` and `/usr/lib/cmake/TCOpenTRDP`, enabling `find_package(TRDP CONFIG REQUIRED)`.
 
+## Drogon Setup (Once per Machine)
+
+The project assumes **Drogon is installed system-wide** (typically under `/usr/local`). Install it once per machine or dev container using the helper script:
+
+```bash
+scripts/setup_drogon.sh
+```
+
+After the install, Drogon is available through `find_package(Drogon CONFIG REQUIRED)` in CMake, so the repo does **not** rebuild or vendor Drogon. When adding new targets, simply link against `Drogon::Drogon` instead of embedding the framework here.
+
 ### CMake detection example
 
 A minimal consumer is provided in the repository root to verify that the installed package is discoverable via CMake:
