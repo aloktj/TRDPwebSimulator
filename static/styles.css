@@ -1,0 +1,182 @@
+:root {
+  --bg: #0c0f14;
+  --panel: #161b24;
+  --border: #1f2a3a;
+  --text: #e5ecff;
+  --muted: #9fb0cc;
+  --accent: #46a6ff;
+  --accent-strong: #2f8ae1;
+  --danger: #ff7b7b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 16px 24px;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: radial-gradient(circle at 20% 20%, rgba(70, 166, 255, 0.08), transparent 25%),
+    radial-gradient(circle at 80% 0%, rgba(255, 123, 123, 0.06), transparent 25%), var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 20px 0 12px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+}
+
+p {
+  margin: 0;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.table-wrapper {
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table thead {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+th,
+td {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+tbody tr {
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+tbody tr:hover {
+  background: rgba(70, 166, 255, 0.08);
+}
+
+tr.active {
+  background: rgba(70, 166, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+button {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+button:hover {
+  border-color: var(--accent);
+  color: white;
+  background: rgba(70, 166, 255, 0.2);
+}
+
+button.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  border-color: var(--accent-strong);
+  color: white;
+}
+
+button.secondary {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-group {
+  display: flex;
+  gap: 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+#fields-table input,
+#fields-table textarea {
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+#fields-table textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.value-pill {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.status {
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.status.success {
+  color: #9be28f;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}

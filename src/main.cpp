@@ -127,6 +127,7 @@ int main(int argc, char **argv) {
     auto &app = drogon::app();
     app.registerPlugin<TelegramHub>();
     app.addListener("0.0.0.0", opts.port);
+    app.setDocumentRoot("./static");
     if (opts.threads > 0) {
         app.setThreadNum(opts.threads);
     }

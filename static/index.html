@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TRDP Web Simulator</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>TRDP Web Simulator</h1>
+    <p>Monitor RX telegrams in real time and edit TX telegrams.</p>
+  </header>
+
+  <main>
+    <section id="telegrams-panel">
+      <div class="panel-header">
+        <h2>Telegrams</h2>
+        <button id="refresh-btn" class="secondary">Refresh</button>
+      </div>
+      <div class="table-wrapper">
+        <table id="telegram-table">
+          <thead>
+            <tr>
+              <th>ComId</th>
+              <th>Name</th>
+              <th>Direction</th>
+              <th>Type</th>
+              <th>Dataset</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="details-panel">
+      <div class="panel-header">
+        <div>
+          <h2 id="detail-title">Telegram Details</h2>
+          <p id="detail-meta" class="muted">Select a telegram to view details.</p>
+        </div>
+        <div id="detail-actions" class="action-group" hidden>
+          <button id="save-fields" class="primary">Save Fields</button>
+          <button id="send-telegram">Send Telegram</button>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table id="fields-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="status" class="status muted"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
