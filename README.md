@@ -406,6 +406,28 @@ TRDP + TAU (TCNopen) libraries and headers
 
 POSIX sockets (Linux recommended)
 
+### Installing TCOpen TRDP package
+
+The repository ships a binary Debian package under `binary/tcopentrdp-2.2.23-amd64.deb`. Install it with:
+
+```bash
+sudo dpkg -i binary/tcopentrdp-2.2.23-amd64.deb
+```
+
+This installs headers under `/usr/include/trdp`, libraries under `/usr/lib` (`libtrdp`, `libtrdpap`, `libtau`), and CMake config files under `/usr/lib/cmake/TRDP` and `/usr/lib/cmake/TCOpenTRDP`, enabling `find_package(TRDP CONFIG REQUIRED)`.
+
+### CMake detection example
+
+A minimal consumer is provided in the repository root to verify that the installed package is discoverable via CMake:
+
+```bash
+cmake -S . -B build
+cmake --build build
+./build/trdp_config_check
+```
+
+The configuration stage should log that it found the TRDP package, and the sample executable will initialize and tear down a session to prove the link works. Flip `-DTRDP_USE_SHARED=OFF` if you prefer the static `TRDP::trdp`/`TRDP::trdpap` pair instead of the shared libraries.
+
 
 Typical Build Steps
 
