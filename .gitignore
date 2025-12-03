@@ -37,5 +37,8 @@
 *.out
 *.app
 
+# Local build outputs
+/build/
+
 # debug information files
 *.dwo
