@@ -426,6 +426,16 @@ scripts/setup_drogon.sh
 
 After the install, Drogon is available through `find_package(Drogon CONFIG REQUIRED)` in CMake, so the repo does **not** rebuild or vendor Drogon. When adding new targets, simply link against `Drogon::Drogon` instead of embedding the framework here.
 
+### Dependency selection flags
+
+CMake lets you toggle between system packages and vendored checkouts to suit your environment:
+
+- `-DUSE_SYSTEM_DROGON=ON|OFF` (default **ON**): when OFF, CMake will try to build/use `third_party/drogon` instead of a machine-wide install.
+- `-DUSE_SYSTEM_TRDP=ON|OFF` (default **ON**): when OFF, CMake searches `third_party/tcnopen` for the TRDP/TAU config package before falling back to the system.
+- `-DTRDP_USE_SHARED=ON|OFF` (default **ON**): choose between shared TRDP/TAU (`TRDP::trdp_shared`, `TRDP::tau_shared`) and the static pair (`TRDP::trdp`, `TRDP::trdpap`).
+
+System packages remain the preferred path so development containers do not need to rebuild Drogon or the TRDP stack; the vendored toggles are available for offline builds or reproducible toolchains.
+
 ### CMake detection example
 
 A minimal consumer is provided in the repository root to verify that the installed TRDP package is discoverable via CMake:
@@ -474,6 +484,26 @@ Add -pthread etc. as needed.
 Run
 
 ./trdp-web-simulator
+
+Smoke Test / Demo Data
+----------------------
+
+- A minimal TAU XML lives at `configs/default.xml` with one dataset (`StatusDataset`) and two telegrams (`TxStatus`/`RxStatus`).
+- A shell helper `scripts/smoke_test.sh` exercises the REST + WebSocket surfaces against that XML:
+
+```bash
+# From the repo root (expects ./build/trdp_web_simulator to be built already)
+scripts/smoke_test.sh
+```
+
+What it does:
+
+1. Starts `trdp_web_simulator` on port `8848` with `configs/default.xml`.
+2. Calls `GET /api/config/telegrams` to list the parsed telegrams.
+3. Opens a WebSocket to `/ws/telegrams` and waits for a TX broadcast.
+4. Sends `POST /api/telegrams/1001/send` with a sample payload; the TX confirmation is captured from the WebSocket log.
+
+`PORT`, `XML_PATH`, and `BINARY` env vars can override the defaults if you run on a different port, XML file, or binary location. The script will `pip install --user websockets` on demand for the WebSocket probe and uses `jq` to pretty-print JSON.
 
 Then open the web UI in your browser, e.g.:
 

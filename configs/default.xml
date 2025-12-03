@@ -1,0 +1,13 @@
+<TauConfig>
+  <DataSets>
+    <Dataset name="StatusDataset" size="16">
+      <Field name="counter" type="UINT32" offset="0" />
+      <Field name="flag" type="BOOL" offset="4" />
+      <Field name="temperature" type="FLOAT" offset="8" />
+    </Dataset>
+  </DataSets>
+  <Telegrams>
+    <PD dir="Tx" comId="1001" dataset="StatusDataset" name="TxStatus" />
+    <PD dir="Rx" comId="1002" dataset="StatusDataset" name="RxStatus" />
+  </Telegrams>
+</TauConfig>
