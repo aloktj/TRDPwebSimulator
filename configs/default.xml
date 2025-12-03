@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TrdpConfiguration>
+  <datasets>
+    <dataset name="HeartbeatDataset" id="100" size="4" description="Periodic heartbeat counter">
+      <variable name="HeartbeatCounter" type="UINT32" offset="0" description="Monotonic heartbeat value" />
+    </dataset>
+    <dataset name="StatusDataset" id="101" size="8" description="Rx status payload for smoke tests">
+      <variable name="StatusCode" type="UINT16" offset="0" description="Application status code" />
+      <variable name="ErrorFlags" type="UINT16" offset="2" description="Bitmask of simulated error states" />
+      <variable name="Timestamp" type="UINT32" offset="4" description="Sample time in milliseconds" />
+    </dataset>
+  </datasets>
+  <telegrams>
+    <telegram name="TxHeartbeat" comId="1001" direction="TX" type="PD" dataset="HeartbeatDataset" cycle="1000" ttl="64" port="17224" srcIp="10.0.0.1" destIp="10.0.0.2" description="Simple TX heartbeat for connectivity checks" />
+    <telegram name="RxStatus" comId="1002" direction="RX" type="PD" dataset="StatusDataset" cycle="1000" ttl="64" port="17224" srcIp="10.0.0.2" destIp="10.0.0.1" description="RX status payload used to verify parsing" />
+  </telegrams>
+</TrdpConfiguration>
