@@ -26,10 +26,13 @@ endif()
 add_library(trdp_link INTERFACE)
 target_link_libraries(trdp_link INTERFACE ${TRDP_LINK_TARGETS})
 
+add_executable(drogon_config_check cmake/tests/drogon_config_check.cpp)
+target_link_libraries(drogon_config_check PRIVATE Drogon::Drogon)
+
 add_executable(trdp_config_check cmake/tests/trdp_config_check.cpp)
 target_link_libraries(trdp_config_check PRIVATE trdp_link)
 
 target_compile_definitions(trdp_config_check PRIVATE TRDP_DETECTION_ONLY)
 
 include(GNUInstallDirs)
-install(TARGETS trdp_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS trdp_config_check drogon_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
