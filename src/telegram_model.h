@@ -103,6 +103,7 @@ class TelegramRegistry {
     void registerTelegram(const TelegramDef &telegram);
     void clear();
 
+    [[nodiscard]] std::vector<DatasetDef> listDatasets() const;
     [[nodiscard]] std::optional<DatasetDef> getDatasetCopy(const std::string &name) const;
     [[nodiscard]] std::optional<TelegramDef> getTelegramCopy(std::uint32_t comId) const;
     [[nodiscard]] std::vector<TelegramDef> listTelegrams() const;

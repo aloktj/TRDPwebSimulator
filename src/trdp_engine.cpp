@@ -1,5 +1,7 @@
 #include "trdp_engine.h"
 
+#include "plugins/TelegramHub.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -268,6 +270,10 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
 
     // TODO: Replace with actual tlp_put()/tlm_put() calls once TRDP bindings are available.
     std::cout << "[TRDP] Sending telegram ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+
+    if (auto *hub = TelegramHub::instance()) {
+        hub->publishTxConfirmation(comId, mergedFields);
+    }
     return true;
 }
 
@@ -283,6 +289,10 @@ void TrdpEngine::handleRxTelegram(std::uint32_t comId, const std::vector<std::ui
     }
 
     decodeFieldsIntoRuntime(endpoint->runtime->dataset(), *endpoint->runtime, payload);
+
+    if (auto *hub = TelegramHub::instance()) {
+        hub->publishRxUpdate(comId, endpoint->runtime->snapshotFields());
+    }
 }
 
 void TrdpEngine::processingLoop() {

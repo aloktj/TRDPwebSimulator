@@ -283,6 +283,16 @@ void TelegramRegistry::clear() {
     runtimes.clear();
 }
 
+std::vector<DatasetDef> TelegramRegistry::listDatasets() const {
+    std::shared_lock lock(mtx);
+    std::vector<DatasetDef> result;
+    result.reserve(datasets.size());
+    for (const auto &entry : datasets) {
+        result.push_back(entry.second);
+    }
+    return result;
+}
+
 std::optional<DatasetDef> TelegramRegistry::getDatasetCopy(const std::string &name) const {
     std::shared_lock lock(mtx);
     const auto it = datasets.find(name);
