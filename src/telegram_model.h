@@ -105,6 +105,7 @@ class TelegramRegistry {
 
     [[nodiscard]] std::optional<DatasetDef> getDatasetCopy(const std::string &name) const;
     [[nodiscard]] std::optional<TelegramDef> getTelegramCopy(std::uint32_t comId) const;
+    [[nodiscard]] std::vector<TelegramDef> listTelegrams() const;
 
     std::shared_ptr<TelegramRuntime> getOrCreateRuntime(std::uint32_t comId);
 

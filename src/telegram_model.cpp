@@ -301,6 +301,16 @@ std::optional<TelegramDef> TelegramRegistry::getTelegramCopy(std::uint32_t comId
     return it->second;
 }
 
+std::vector<TelegramDef> TelegramRegistry::listTelegrams() const {
+    std::shared_lock lock(mtx);
+    std::vector<TelegramDef> result;
+    result.reserve(telegrams.size());
+    for (const auto &entry : telegrams) {
+        result.push_back(entry.second);
+    }
+    return result;
+}
+
 std::shared_ptr<TelegramRuntime> TelegramRegistry::getOrCreateRuntime(std::uint32_t comId) {
     std::unique_lock lock(mtx);
     const auto runtimeIt = runtimes.find(comId);
