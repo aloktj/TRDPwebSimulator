@@ -39,5 +39,9 @@ add_library(trdp_telegram_model STATIC src/telegram_model.cpp)
 target_include_directories(trdp_telegram_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(trdp_telegram_model PUBLIC TinyXML2::TinyXML2)
 
+add_library(trdp_engine STATIC src/trdp_engine.cpp)
+target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(trdp_engine PUBLIC trdp_telegram_model trdp_link Threads::Threads)
+
 include(GNUInstallDirs)
 install(TARGETS trdp_config_check drogon_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
