@@ -12,8 +12,8 @@ class WsTelegram : public drogon::WebSocketController<WsTelegram> {
 
     void handleNewConnection(const drogon::HttpRequestPtr &req, const drogon::WebSocketConnectionPtr &conn) override;
     void handleConnectionClosed(const drogon::WebSocketConnectionPtr &conn) override;
-    void handleMessage(const drogon::WebSocketConnectionPtr &conn, std::string &&message,
-                       const drogon::WebSocketMessageType &type) override;
+    void handleNewMessage(const drogon::WebSocketConnectionPtr &conn, std::string &&message,
+                          const drogon::WebSocketMessageType &type) override;
 };
 
 } // namespace trdp

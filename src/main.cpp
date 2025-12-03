@@ -124,8 +124,10 @@ int main(int argc, char **argv) {
     }
     applyTrdpEnv(opts);
 
+    TelegramHub telegramHub;
+    telegramHub.initAndStart(Json::Value());
+
     auto &app = drogon::app();
-    app.registerPlugin<TelegramHub>();
     app.addListener("0.0.0.0", opts.port);
     app.setDocumentRoot("./static");
     if (opts.threads > 0) {
@@ -138,6 +140,7 @@ int main(int argc, char **argv) {
     }
 
     app.run();
+    telegramHub.shutdown();
     return 0;
 }
 

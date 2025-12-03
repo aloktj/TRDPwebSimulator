@@ -52,7 +52,7 @@ void TelegramHub::initAndStart(const Json::Value &) {
     TrdpEngine::instance().start();
 }
 
-void TelegramHub::shutdownAndCleanup() {
+void TelegramHub::shutdown() {
     {
         std::lock_guard lock(connMtx);
         connections.clear();
@@ -63,7 +63,7 @@ void TelegramHub::shutdownAndCleanup() {
 
 TelegramHub *TelegramHub::instance() { return g_instance; }
 
-void TelegramHub::subscribe(const std::shared_ptr<drogon::WebSocketConnection> &conn) {
+void TelegramHub::subscribe(const drogon::WebSocketConnectionPtr &conn) {
     {
         std::lock_guard lock(connMtx);
         connections.insert(conn);
@@ -71,11 +71,9 @@ void TelegramHub::subscribe(const std::shared_ptr<drogon::WebSocketConnection> &
     sendSnapshot(conn);
 }
 
-void TelegramHub::unsubscribe(const drogon::WebSocketConnection *conn) {
+void TelegramHub::unsubscribe(const drogon::WebSocketConnectionPtr &conn) {
     std::lock_guard lock(connMtx);
-    const auto it = std::find_if(connections.begin(), connections.end(), [conn](const auto &ptr) {
-        return ptr.get() == conn;
-    });
+    const auto it = std::find_if(connections.begin(), connections.end(), [conn](const auto &ptr) { return ptr == conn; });
     if (it != connections.end()) {
         connections.erase(it);
     }
@@ -97,7 +95,7 @@ void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std:
     broadcast(payload);
 }
 
-void TelegramHub::sendSnapshot(const std::shared_ptr<drogon::WebSocketConnection> &conn) {
+void TelegramHub::sendSnapshot(const drogon::WebSocketConnectionPtr &conn) {
     Json::Value payload;
     payload["type"] = "snapshot";
     auto &items = payload["telegrams"];

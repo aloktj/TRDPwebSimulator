@@ -462,9 +462,5 @@ bool ensureRegistryInitialized() {
     return loaded;
 }
 
-namespace {
-[[maybe_unused]] const bool bootstrapOnce = ensureRegistryInitialized();
-} // namespace
-
 } // namespace trdp
 
