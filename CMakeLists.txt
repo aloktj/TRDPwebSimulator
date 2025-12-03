@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND CMAKE_PREFIX_PATH "/usr/lib/cmake")
 
 find_package(Threads REQUIRED)
-find_package(TinyXML2 REQUIRED)
+find_package(tinyxml2 CONFIG REQUIRED)
 
 option(TRDP_USE_SHARED "Link against shared TRDP libraries" ON)
 option(USE_SYSTEM_DROGON "Prefer system Drogon installation over third_party/drogon" ON)
@@ -64,10 +64,10 @@ target_compile_definitions(trdp_config_check PRIVATE TRDP_DETECTION_ONLY)
 
 add_library(trdp_telegram_model STATIC src/telegram_model.cpp)
 target_include_directories(trdp_telegram_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(trdp_telegram_model PUBLIC TinyXML2::TinyXML2)
+target_link_libraries(trdp_telegram_model PUBLIC tinyxml2::tinyxml2)
 
 add_library(trdp_engine STATIC src/trdp_engine.cpp)
-target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp)
 target_link_libraries(trdp_engine PUBLIC trdp_telegram_model trdp_link Threads::Threads)
 
 add_library(trdp_web_backend STATIC
@@ -75,7 +75,7 @@ add_library(trdp_web_backend STATIC
     src/controllers/TelegramController.cpp
     src/controllers/WsTelegram.cpp
     src/plugins/TelegramHub.cpp)
-target_include_directories(trdp_web_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(trdp_web_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp)
 target_link_libraries(trdp_web_backend PUBLIC trdp_engine trdp_telegram_model Drogon::Drogon)
 
 add_executable(trdp_web_simulator src/main.cpp)

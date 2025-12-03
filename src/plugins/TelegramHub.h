@@ -3,6 +3,7 @@
 #include "telegram_model.h"
 
 #include <drogon/plugins/Plugin.h>
+#include <drogon/WebSocketConnection.h>
 
 #include <mutex>
 #include <set>
@@ -14,15 +15,15 @@ class TelegramHub : public drogon::Plugin<TelegramHub> {
     TelegramHub();
 
     void initAndStart(const Json::Value &config) override;
-    void shutdownAndCleanup() override;
+    void shutdown() override;
 
-    void subscribe(const std::shared_ptr<drogon::WebSocketConnection> &conn);
-    void unsubscribe(const drogon::WebSocketConnection *conn);
+    void subscribe(const drogon::WebSocketConnectionPtr &conn);
+    void unsubscribe(const drogon::WebSocketConnectionPtr &conn);
 
     void publishRxUpdate(std::uint32_t comId, const std::map<std::string, FieldValue> &fields);
     void publishTxConfirmation(std::uint32_t comId, const std::map<std::string, FieldValue> &fields);
 
-    void sendSnapshot(const std::shared_ptr<drogon::WebSocketConnection> &conn);
+    void sendSnapshot(const drogon::WebSocketConnectionPtr &conn);
 
     static TelegramHub *instance();
 
@@ -32,7 +33,7 @@ class TelegramHub : public drogon::Plugin<TelegramHub> {
     Json::Value telegramToJson(const TelegramDef &telegram) const;
 
     std::mutex connMtx;
-    std::set<std::shared_ptr<drogon::WebSocketConnection>> connections;
+    std::set<drogon::WebSocketConnectionPtr> connections;
 };
 
 } // namespace trdp

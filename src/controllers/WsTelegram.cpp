@@ -12,12 +12,15 @@ void WsTelegram::handleNewConnection(const drogon::HttpRequestPtr &, const drogo
 
 void WsTelegram::handleConnectionClosed(const drogon::WebSocketConnectionPtr &conn) {
     if (auto *hub = TelegramHub::instance()) {
-        hub->unsubscribe(conn.get());
+        hub->unsubscribe(conn);
     }
 }
 
-void WsTelegram::handleMessage(const drogon::WebSocketConnectionPtr &, std::string &&,
-                               const drogon::WebSocketMessageType &) {
+void WsTelegram::handleNewMessage(const drogon::WebSocketConnectionPtr &conn, std::string &&message,
+                                  const drogon::WebSocketMessageType &type) {
+    (void)conn;
+    (void)message;
+    (void)type;
     // This controller is push-only; incoming messages are ignored for now.
 }
 
