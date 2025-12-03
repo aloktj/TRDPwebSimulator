@@ -428,7 +428,7 @@ After the install, Drogon is available through `find_package(Drogon CONFIG REQUI
 
 ### CMake detection example
 
-A minimal consumer is provided in the repository root to verify that the installed package is discoverable via CMake:
+A minimal consumer is provided in the repository root to verify that the installed TRDP package is discoverable via CMake:
 
 ```bash
 cmake -S . -B build
@@ -437,6 +437,16 @@ cmake --build build
 ```
 
 The configuration stage should log that it found the TRDP package, and the sample executable will initialize and tear down a session to prove the link works. Flip `-DTRDP_USE_SHARED=OFF` if you prefer the static `TRDP::trdp`/`TRDP::trdpap` pair instead of the shared libraries.
+
+Similarly, there is a tiny Drogon probe to validate that the framework is installed system-wide and can start an event loop:
+
+```bash
+cmake -S . -B build
+cmake --build build
+./build/drogon_config_check
+```
+
+It binds an ephemeral loopback listener, spins the Drogon event loop briefly, and exits. Any failure indicates that Drogon is not installed or is missing runtime dependencies.
 
 
 Typical Build Steps
