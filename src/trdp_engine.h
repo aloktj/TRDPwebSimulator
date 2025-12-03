@@ -1,0 +1,71 @@
+#pragma once
+
+#include "telegram_model.h"
+
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace trdp {
+
+/**
+ * Minimal TRDP engine wrapper.
+ *
+ * Responsible for:
+ *  - Initialising the TRDP stack (stubbed for now with logging hooks).
+ *  - Creating PD/MD publishers and subscribers based on the TelegramRegistry.
+ *  - Mapping RX buffers into TelegramRuntime field values.
+ *  - Encoding TX field values into buffers before sending.
+ *  - Running a background processing loop to keep the stack alive.
+ */
+class TrdpEngine {
+  public:
+    static TrdpEngine &instance();
+
+    // Start TRDP stack and background worker. Idempotent.
+    bool start();
+
+    // Stop worker thread and tear down handles. Safe to call multiple times.
+    void stop();
+
+    [[nodiscard]] bool isRunning() const noexcept { return running.load(); }
+
+    // Push updated TX field values to the network. Returns false on failure.
+    bool sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields);
+
+    // Feed a freshly received PD telegram into the registry/runtime.
+    void handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
+
+  private:
+    TrdpEngine() = default;
+    TrdpEngine(const TrdpEngine &) = delete;
+    TrdpEngine &operator=(const TrdpEngine &) = delete;
+
+    struct EndpointHandle {
+        TelegramDef def;
+        std::shared_ptr<TelegramRuntime> runtime;
+    };
+
+    bool bootstrapRegistry();
+    bool initialiseTrdpStack();
+    void buildEndpoints();
+    void processingLoop();
+
+    EndpointHandle *findEndpoint(std::uint32_t comId);
+
+    std::atomic<bool> running{false};
+    std::atomic<bool> stopRequested{false};
+    std::thread worker;
+    std::mutex stateMtx;
+    std::condition_variable cv;
+    std::map<std::uint32_t, EndpointHandle> endpoints;
+};
+
+} // namespace trdp
+
