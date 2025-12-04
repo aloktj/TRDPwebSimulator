@@ -440,6 +440,7 @@ bool loadFromTauXml(const std::string &xmlPath) {
 namespace {
 std::once_flag xmlBootstrapFlag;
 std::string defaultXmlPath = "configs/default.xml";
+bool defaultXmlLoaded = false;
 
 bool loadDefaultXmlInternal() {
     const char *envPath = std::getenv("TRDP_XML_PATH");
@@ -450,16 +451,16 @@ bool loadDefaultXmlInternal() {
         return false;
     }
 
-    return loadFromTauXml(path);
+    defaultXmlLoaded = loadFromTauXml(path);
+    return defaultXmlLoaded;
 }
 } // namespace
 
 void setDefaultXmlConfig(const std::string &xmlPath) { defaultXmlPath = xmlPath; }
 
 bool ensureRegistryInitialized() {
-    bool loaded = false;
-    std::call_once(xmlBootstrapFlag, [&loaded]() { loaded = loadDefaultXmlInternal(); });
-    return loaded;
+    std::call_once(xmlBootstrapFlag, []() { defaultXmlLoaded = loadDefaultXmlInternal(); });
+    return defaultXmlLoaded;
 }
 
 } // namespace trdp
