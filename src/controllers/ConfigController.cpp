@@ -70,6 +70,14 @@ void ConfigController::loadConfig(const drogon::HttpRequestPtr &req,
 
 void ConfigController::listDatasets(const drogon::HttpRequestPtr &,
                                     std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+    if (!ensureRegistryInitialized()) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+        resp->setStatusCode(drogon::k500InternalServerError);
+        (*resp->getJsonObject())["error"] = "TRDP registry is not initialised";
+        callback(resp);
+        return;
+    }
+
     Json::Value json;
     for (const auto &dataset : TelegramRegistry::instance().listDatasets()) {
         json.append(datasetToJson(dataset));
@@ -79,6 +87,14 @@ void ConfigController::listDatasets(const drogon::HttpRequestPtr &,
 
 void ConfigController::listTelegrams(const drogon::HttpRequestPtr &,
                                      std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
+    if (!ensureRegistryInitialized()) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+        resp->setStatusCode(drogon::k500InternalServerError);
+        (*resp->getJsonObject())["error"] = "TRDP registry is not initialised";
+        callback(resp);
+        return;
+    }
+
     Json::Value json;
     for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
         json.append(telegramToJson(telegram));
