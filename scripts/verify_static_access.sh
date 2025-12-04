@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATIC_DIR="$ROOT_DIR/static"
 PORT="${PORT:-8000}"
+HOST="${HOST:-127.0.0.1}"
 
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]]; then
@@ -12,12 +13,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 -m http.server "$PORT" --directory "$STATIC_DIR" >/tmp/trdp_static_server.log 2>&1 &
+python3 -m http.server "$PORT" --bind "$HOST" --directory "$STATIC_DIR" >/tmp/trdp_static_server.log 2>&1 &
 SERVER_PID=$!
 
 # Give the server a moment to start
-sleep 1
+sleep 2
 
-curl -fsS "http://localhost:${PORT}/" >/tmp/trdp_static_probe.html
+curl -fsS "http://${HOST}:${PORT}/" >/tmp/trdp_static_probe.html
 
-echo "Static site reachable on http://localhost:${PORT}/"
+echo "Static site reachable on http://${HOST}:${PORT}/"
