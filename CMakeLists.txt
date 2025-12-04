@@ -77,7 +77,7 @@ add_library(trdp_engine STATIC src/trdp_engine.cpp)
 target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp)
 target_link_libraries(trdp_engine PUBLIC trdp_telegram_model trdp_link Threads::Threads)
 
-add_library(trdp_web_backend STATIC
+add_library(trdp_web_backend OBJECT
     src/controllers/ConfigController.cpp
     src/controllers/TelegramController.cpp
     src/controllers/WsTelegram.cpp
@@ -85,8 +85,8 @@ add_library(trdp_web_backend STATIC
 target_include_directories(trdp_web_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp)
 target_link_libraries(trdp_web_backend PUBLIC trdp_engine trdp_telegram_model Drogon::Drogon)
 
-add_executable(trdp_web_simulator src/main.cpp)
-target_link_libraries(trdp_web_simulator PRIVATE trdp_web_backend)
+add_executable(trdp_web_simulator src/main.cpp $<TARGET_OBJECTS:trdp_web_backend>)
+target_link_libraries(trdp_web_simulator PRIVATE trdp_engine trdp_telegram_model Drogon::Drogon)
 
 include(GNUInstallDirs)
 if(TRDP_FOUND)
