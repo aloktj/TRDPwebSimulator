@@ -501,8 +501,6 @@ bool loadDefaultXmlInternal() {
     defaultXmlLoaded = loadFromTauXml(resolved->string());
     return defaultXmlLoaded;
 }
-} // namespace
-
 void setDefaultXmlConfig(const std::string &xmlPath) { defaultXmlPath = xmlPath; }
 
 bool ensureRegistryInitialized() {
