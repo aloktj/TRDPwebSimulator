@@ -96,6 +96,14 @@ void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std:
 }
 
 void TelegramHub::sendSnapshot(const drogon::WebSocketConnectionPtr &conn) {
+    if (!ensureRegistryInitialized()) {
+        Json::Value error;
+        error["type"] = "error";
+        error["message"] = "TRDP registry is not initialised";
+        conn->send(error.toStyledString());
+        return;
+    }
+
     Json::Value payload;
     payload["type"] = "snapshot";
     auto &items = payload["telegrams"];

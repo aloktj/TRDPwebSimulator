@@ -139,6 +139,14 @@ Json::Value telegramToJson(const TelegramDef &telegram, const std::shared_ptr<Te
 
 void TelegramController::getTelegram(const drogon::HttpRequestPtr &,
                                      std::function<void(const drogon::HttpResponsePtr &)> &&callback, std::uint32_t comId) {
+    if (!ensureRegistryInitialized()) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+        resp->setStatusCode(drogon::k500InternalServerError);
+        (*resp->getJsonObject())["error"] = "TRDP registry is not initialised";
+        callback(resp);
+        return;
+    }
+
     const auto telegram = TelegramRegistry::instance().getTelegramCopy(comId);
     if (!telegram.has_value()) {
         callback(drogon::HttpResponse::newNotFoundResponse());
@@ -151,6 +159,14 @@ void TelegramController::getTelegram(const drogon::HttpRequestPtr &,
 void TelegramController::updateFields(const drogon::HttpRequestPtr &req,
                                       std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                                       std::uint32_t comId) {
+    if (!ensureRegistryInitialized()) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+        resp->setStatusCode(drogon::k500InternalServerError);
+        (*resp->getJsonObject())["error"] = "TRDP registry is not initialised";
+        callback(resp);
+        return;
+    }
+
     const auto telegram = TelegramRegistry::instance().getTelegramCopy(comId);
     if (!telegram.has_value()) {
         callback(drogon::HttpResponse::newNotFoundResponse());
@@ -193,6 +209,14 @@ void TelegramController::updateFields(const drogon::HttpRequestPtr &req,
 void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
                                       std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                                       std::uint32_t comId) {
+    if (!ensureRegistryInitialized()) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+        resp->setStatusCode(drogon::k500InternalServerError);
+        (*resp->getJsonObject())["error"] = "TRDP registry is not initialised";
+        callback(resp);
+        return;
+    }
+
     const auto telegram = TelegramRegistry::instance().getTelegramCopy(comId);
     if (!telegram.has_value()) {
         callback(drogon::HttpResponse::newNotFoundResponse());
