@@ -511,6 +511,18 @@ http://localhost:8080/
 
 (Exact port and static UI path depend on your Drogon config.)
 
+---
+
+Configuration files
+
+- `configs/` now ships with a minimal `default.xml` covering a TX heartbeat dataset/telegram and an RX status dataset/telegram
+  so that smoke tests have predictable ComIds, datasets, and fields.
+- The simulator looks for `configs/default.xml` by default. Override it with either:
+  - Environment variable: `TRDP_CONFIG_PATH=/absolute/path/to/config.xml ./trdp-web-simulator`
+  - CLI flag: `./trdp-web-simulator --config /absolute/path/to/config.xml`
+- The CLI flag takes precedence if both are provided. Point either option at any XML that follows the same dataset/telegram
+  structure as the sample.
+
 
 ---
 
