@@ -7,6 +7,7 @@
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
+#include <system_error>
 
 #include <tinyxml2.h>
 
@@ -440,26 +441,71 @@ bool loadFromTauXml(const std::string &xmlPath) {
 namespace {
 std::once_flag xmlBootstrapFlag;
 std::string defaultXmlPath = "configs/default.xml";
+bool defaultXmlLoaded = false;
+
+std::optional<std::filesystem::path> executableDir() {
+    std::error_code ec;
+    const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    return exe.parent_path();
+}
+
+std::optional<std::filesystem::path> resolveXmlPath(const std::string &rawPath) {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> candidates;
+    const fs::path requested(rawPath);
+
+    if (requested.is_absolute()) {
+        candidates.push_back(requested);
+    } else {
+        candidates.push_back(fs::current_path() / requested);
+        const auto cwdParent = fs::current_path().parent_path();
+        if (!cwdParent.empty()) {
+            candidates.push_back(cwdParent / requested);
+        }
+        if (const auto exeDir = executableDir()) {
+            candidates.push_back(*exeDir / requested);
+            const auto exeParent = exeDir->parent_path();
+            if (!exeParent.empty()) {
+                candidates.push_back(exeParent / requested);
+            }
+        }
+    }
+
+    for (const auto &candidate : candidates) {
+        std::error_code ec;
+        if (fs::exists(candidate, ec) && fs::is_regular_file(candidate, ec)) {
+            std::error_code canonicalEc;
+            const auto canonical = fs::canonical(candidate, canonicalEc);
+            return canonicalEc ? candidate : canonical;
+        }
+    }
+    return std::nullopt;
+}
 
 bool loadDefaultXmlInternal() {
     const char *envPath = std::getenv("TRDP_XML_PATH");
     std::string path = envPath != nullptr ? std::string(envPath) : defaultXmlPath;
 
-    if (!std::filesystem::exists(path)) {
-        std::cerr << "TRDP XML not found: " << path << "\n";
+    const auto resolved = resolveXmlPath(path);
+    if (!resolved) {
+        std::cerr << "TRDP XML not found: " << path
+                  << " (checked current directory, parent, and executable locations)\n";
         return false;
     }
 
-    return loadFromTauXml(path);
+    defaultXmlLoaded = loadFromTauXml(resolved->string());
+    return defaultXmlLoaded;
 }
 } // namespace
 
 void setDefaultXmlConfig(const std::string &xmlPath) { defaultXmlPath = xmlPath; }
 
 bool ensureRegistryInitialized() {
-    bool loaded = false;
-    std::call_once(xmlBootstrapFlag, [&loaded]() { loaded = loadDefaultXmlInternal(); });
-    return loaded;
+    std::call_once(xmlBootstrapFlag, []() { defaultXmlLoaded = loadDefaultXmlInternal(); });
+    return defaultXmlLoaded;
 }
 
 } // namespace trdp
