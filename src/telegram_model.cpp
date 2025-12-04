@@ -15,6 +15,10 @@ namespace trdp {
 
 namespace {
 
+std::once_flag xmlBootstrapFlag;
+std::string defaultXmlPath = "configs/default.xml";
+bool defaultXmlLoaded = false;
+
 std::string toUpper(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     return value;
@@ -345,6 +349,8 @@ std::shared_ptr<TelegramRuntime> TelegramRegistry::getOrCreateRuntime(std::uint3
 }
 
 bool loadFromTauXml(const std::string &xmlPath) {
+    defaultXmlLoaded = false;
+
     tinyxml2::XMLDocument doc;
     if (doc.LoadFile(xmlPath.c_str()) != tinyxml2::XML_SUCCESS) {
         std::cerr << "Failed to load TRDP XML: " << xmlPath << " (" << doc.ErrorStr() << ")\n";
@@ -435,13 +441,9 @@ bool loadFromTauXml(const std::string &xmlPath) {
         }
     }
 
+    defaultXmlLoaded = true;
     return true;
 }
-
-namespace {
-std::once_flag xmlBootstrapFlag;
-std::string defaultXmlPath = "configs/default.xml";
-bool defaultXmlLoaded = false;
 
 std::optional<std::filesystem::path> executableDir() {
     std::error_code ec;
