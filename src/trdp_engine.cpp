@@ -10,6 +10,94 @@
 namespace trdp {
 namespace {
 
+/**
+ * Lightweight façade over the TRDP/TAU stack calls we described during analysis.
+ *
+ * The implementation remains a stub so the application can build without the
+ * native stack present, but the methods mirror the intended flow:
+ *  - initialise() represents tlc_init/tau_init and session bring-up
+ *  - bindPd/bindMd mirror tlp_publish/tlp_subscribe/tlm_addListener
+ *  - getProcessInterval/processTick mirror tlc_getInterval/tlc_process
+ */
+class TrdpStackFacade {
+  public:
+    bool initialise()
+    {
+        if (initialised) {
+            return true;
+        }
+        std::cout << "[TRDP] tlc_init/tau_init stubbed initialisation" << std::endl;
+        initialised = true;
+        lastProcess = std::chrono::steady_clock::now();
+        return true;
+    }
+
+    void shutdown()
+    {
+        if (!initialised) {
+            return;
+        }
+        std::cout << "[TRDP] tlc_terminate/tau_terminate stubbed shutdown" << std::endl;
+        initialised = false;
+    }
+
+    bool bindPdEndpoint(const TelegramDef &telegram)
+    {
+        if (!initialised) {
+            return false;
+        }
+        std::cout << "[TRDP] tlp_publish/tlp_subscribe stub for ComId " << telegram.comId << std::endl;
+        return true;
+    }
+
+    bool bindMdEndpoint(const TelegramDef &telegram)
+    {
+        if (!initialised) {
+            return false;
+        }
+        std::cout << "[TRDP] tlm_addListener/tlm_request stub for ComId " << telegram.comId << std::endl;
+        return true;
+    }
+
+    bool sendTelegram(const TelegramDef &telegram, const std::vector<std::uint8_t> &buffer)
+    {
+        if (!initialised) {
+            return false;
+        }
+        const char *type = telegram.type == TelegramType::MD ? "MD" : "PD";
+        std::cout << "[TRDP] " << type << " send stub ComId=" << telegram.comId << " bytes=" << buffer.size()
+                  << std::endl;
+        return true;
+    }
+
+    std::chrono::milliseconds getProcessInterval()
+    {
+        // emulate tlc_getInterval/tlp_getInterval returning the next wait value
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastProcess);
+        if (elapsed >= defaultInterval) {
+            return std::chrono::milliseconds(0);
+        }
+        return defaultInterval - elapsed;
+    }
+
+    void processTick()
+    {
+        if (!initialised) {
+            return;
+        }
+        std::cout << "[TRDP] tlc_process/tlp_processReceive stub tick" << std::endl;
+        lastProcess = std::chrono::steady_clock::now();
+    }
+
+  private:
+    bool initialised{false};
+    std::chrono::steady_clock::time_point lastProcess{};
+    const std::chrono::milliseconds defaultInterval{50};
+};
+
+TrdpStackFacade stackFacade;
+
 template <typename T> T readLe(const std::uint8_t *data) {
     T value{};
     std::memcpy(&value, data, sizeof(T));
@@ -270,7 +358,7 @@ void TrdpEngine::buildEndpoints() {
         EndpointHandle handle{.def = telegram, .runtime = runtime};
 
         if (telegram.type == TelegramType::MD) {
-            handle.mdHandleReady = mdSessionInitialised;
+            handle.mdHandleReady = mdSessionInitialised && stackFacade.bindMdEndpoint(telegram);
             if (handle.mdHandleReady) {
                 std::cout << "[TRDP] Binding MD endpoint for ComId " << telegram.comId << std::endl;
             } else {
@@ -278,7 +366,7 @@ void TrdpEngine::buildEndpoints() {
                           << std::endl;
             }
         } else {
-            handle.pdHandleReady = pdSessionInitialised;
+            handle.pdHandleReady = pdSessionInitialised && stackFacade.bindPdEndpoint(telegram);
             if (handle.pdHandleReady) {
                 std::cout << "[TRDP] Binding PD endpoint for ComId " << telegram.comId << std::endl;
             } else {
@@ -372,13 +460,19 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
             std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
             return false;
         }
-        std::cout << "[TRDP] Sending MD telegram ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+        if (!stackFacade.sendTelegram(endpoint->def, buffer)) {
+            std::cerr << "[TRDP] MD send failed for ComId " << comId << std::endl;
+            return false;
+        }
     } else {
         if (!endpoint->pdHandleReady) {
             std::cerr << "[TRDP] PD session not available; drop TX ComId " << comId << std::endl;
             return false;
         }
-        std::cout << "[TRDP] Sending PD telegram ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+        if (!stackFacade.sendTelegram(endpoint->def, buffer)) {
+            std::cerr << "[TRDP] PD send failed for ComId " << comId << std::endl;
+            return false;
+        }
     }
 
     if (auto *hub = TelegramHub::instance()) {
