@@ -3,12 +3,23 @@
 #include "plugins/TelegramHub.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <type_traits>
+#include <utility>
 
 #ifdef TRDP_STACK_PRESENT
+#if __has_include(<tau_dnr.h>)
+#include <tau_dnr.h>
+#define TRDP_HAS_TAU_DNR 1
+#endif
+#if __has_include(<tau_ecsp.h>)
+#include <tau_ecsp.h>
+#define TRDP_HAS_TAU_ECSP 1
+#endif
 #include <tau_ctrl.h>
 #include <trdp/api/trdp_if_light.h>
 #endif
@@ -187,6 +198,50 @@ std::map<std::string, FieldValue> mergeRuntimeFields(const TelegramRuntime &runt
     return result;
 }
 
+#ifdef TRDP_HAS_TAU_DNR
+template <typename T, typename = void> struct hasHostsFile : std::false_type {};
+template <typename T> struct hasHostsFile<T, std::void_t<decltype(std::declval<T>().pHostsFile)>> : std::true_type {};
+template <typename T, typename = void> struct hasThreadModel : std::false_type {};
+template <typename T> struct hasThreadModel<T, std::void_t<decltype(std::declval<T>().threadModel)>> : std::true_type {};
+template <typename T, typename = void> struct hasCacheEntries : std::false_type {};
+template <typename T> struct hasCacheEntries<T, std::void_t<decltype(std::declval<T>().maxNoCacheEntries)>>
+    : std::true_type {};
+template <typename T, typename = void> struct hasCacheTimeout : std::false_type {};
+template <typename T> struct hasCacheTimeout<T, std::void_t<decltype(std::declval<T>().cacheTimeout)>> : std::true_type {};
+template <typename T, typename = void> struct hasEnableCache : std::false_type {};
+template <typename T> struct hasEnableCache<T, std::void_t<decltype(std::declval<T>().enableCache)>> : std::true_type {};
+
+template <typename Config> void setDnrHostsFile(Config &cfg, const char *hostsFile) {
+    if constexpr (hasHostsFile<Config>::value) {
+        cfg.pHostsFile = hostsFile;
+    }
+}
+
+template <typename Config> void setDnrThreadModel(Config &cfg, TrdpEngine::DnrMode mode) {
+    if constexpr (hasThreadModel<Config>::value) {
+        cfg.threadModel = (mode == TrdpEngine::DnrMode::DedicatedThread) ? TAU_DNR_THREAD_DEDICATED : TAU_DNR_THREAD_COMMON;
+    }
+}
+
+template <typename Config> void setDnrCacheEntries(Config &cfg, std::size_t entries) {
+    if constexpr (hasCacheEntries<Config>::value) {
+        cfg.maxNoCacheEntries = static_cast<UINT32>(entries);
+    }
+}
+
+template <typename Config> void setDnrCacheTimeout(Config &cfg, std::chrono::milliseconds timeout) {
+    if constexpr (hasCacheTimeout<Config>::value) {
+        cfg.cacheTimeout = static_cast<UINT32>(timeout.count());
+    }
+}
+
+template <typename Config> void setDnrCacheEnabled(Config &cfg, bool enable) {
+    if constexpr (hasEnableCache<Config>::value) {
+        cfg.enableCache = enable ? TRUE : FALSE;
+    }
+}
+#endif
+
 } // namespace
 
 TrdpEngine &TrdpEngine::instance() {
@@ -230,6 +285,15 @@ bool TrdpEngine::initialiseTrdpStack() {
         std::cerr << "[TRDP] tau_init failed: " << tauErr << std::endl;
     } else {
         tauInitialised = true;
+    }
+
+    if (config.enableDnr && !initialiseDnr()) {
+        tlc_terminate();
+        return false;
+    }
+
+    if (config.ecspConfig.enable) {
+        initialiseEcsp();
     }
 
     const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, nullptr, nullptr, nullptr, nullptr);
@@ -293,6 +357,8 @@ void TrdpEngine::teardownTrdpStack() {
             tau_terminate();
             tauInitialised = false;
         }
+        dnrInitialised = false;
+        ecspInitialised = false;
 #else
         std::cout << "[TRDP] Stack not available; stub teardown" << std::endl;
 #endif
@@ -345,12 +411,144 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
     return std::chrono::milliseconds(100);
 }
 
+void TrdpEngine::logConfigError(const std::string &context, TRDP_ERR_T err) const {
+    std::cerr << "[TRDP] " << context << " failed: " << err;
+    if (!config.hostsFile.empty()) {
+        std::cerr << " (hosts file: " << config.hostsFile << ")";
+    }
+    std::cerr << std::endl;
+}
+
+void TrdpEngine::trimCaches() {
+    if (!config.cacheConfig.enableUriCache) {
+        uriCache.clear();
+        ipCache.clear();
+        labelCache.clear();
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto eraseExpired = [&](auto &cache) {
+        for (auto it = cache.begin(); it != cache.end();) {
+            if (now >= it->second.expiresAt) {
+                it = cache.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+
+    eraseExpired(uriCache);
+    eraseExpired(ipCache);
+    eraseExpired(labelCache);
+    updateCacheLimits();
+}
+
+void TrdpEngine::updateCacheLimits() {
+    const auto enforceLimit = [&](auto &cache) {
+        while (cache.size() > config.cacheConfig.uriCacheEntries) {
+            cache.erase(cache.begin());
+        }
+    };
+
+    enforceLimit(uriCache);
+    enforceLimit(ipCache);
+    enforceLimit(labelCache);
+}
+
+void TrdpEngine::setCacheEntry(CacheEntry &entry, CacheEntry::Payload value) {
+    entry.payload = std::move(value);
+    if (config.cacheConfig.uriCacheTtl.count() > 0) {
+        entry.expiresAt = std::chrono::steady_clock::now() + config.cacheConfig.uriCacheTtl;
+    } else {
+        entry.expiresAt = std::chrono::steady_clock::now();
+    }
+}
+
 void TrdpEngine::markTopologyChanged() {
     ++etbTopoCounter;
     ++opTrainTopoCounter;
     topologyCountersDirty = true;
     std::cout << "[TRDP] Topology change detected; ETB=" << etbTopoCounter
               << " OpTrain=" << opTrainTopoCounter << std::endl;
+}
+
+bool TrdpEngine::initialiseDnr() {
+#ifdef TRDP_STACK_PRESENT
+    const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
+
+#ifdef TRDP_HAS_TAU_DNR
+    TRDP_DNR_CONFIG_T dnrConfig{};
+    setDnrHostsFile(dnrConfig, hostsFile);
+    setDnrThreadModel(dnrConfig, config.dnrMode);
+    setDnrCacheEntries(dnrConfig, config.cacheConfig.uriCacheEntries);
+    setDnrCacheTimeout(dnrConfig, config.cacheConfig.uriCacheTtl);
+    setDnrCacheEnabled(dnrConfig, config.cacheConfig.enableUriCache);
+    const TRDP_ERR_T dnrErr = tau_initDnr(&dnrConfig);
+#else
+    const TRDP_ERR_T dnrErr = tau_initDnr(nullptr);
+#endif
+    if (dnrErr != TRDP_NO_ERR) {
+        logConfigError("tau_initDnr", dnrErr);
+        return false;
+    }
+    dnrInitialised = true;
+    std::cout << "[TRDP] DNR initialised";
+    if (hostsFile != nullptr) {
+        std::cout << " (hosts file: " << hostsFile << ")";
+    }
+    std::cout << std::endl;
+#endif
+    return true;
+}
+
+void TrdpEngine::initialiseEcsp() {
+#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_ECSP)
+    TRDP_ECSPCTRL_CONFIG_T ecspConfig{};
+    ecspConfig.confirmTimeout = static_cast<UINT32>(config.ecspConfig.confirmTimeout.count());
+    const TRDP_ERR_T initErr = tau_initEcspCtrl(&ecspConfig);
+    if (initErr != TRDP_NO_ERR) {
+        logConfigError("tau_initEcspCtrl", initErr);
+        return;
+    }
+    ecspInitialised = true;
+    updateEcspControl();
+#endif
+}
+
+void TrdpEngine::updateEcspControl() {
+#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_ECSP)
+    if (!ecspInitialised) {
+        return;
+    }
+    TRDP_ECSPCTRL_PARMS_T parms{};
+    parms.enable = config.ecspConfig.enable ? TRUE : FALSE;
+    parms.confirmTimeout = static_cast<UINT32>(config.ecspConfig.confirmTimeout.count());
+    const TRDP_ERR_T setErr = tau_setEcspCtrl(&parms);
+    if (setErr != TRDP_NO_ERR) {
+        logConfigError("tau_setEcspCtrl", setErr);
+    }
+#endif
+}
+
+void TrdpEngine::pollEcspStatus() {
+#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_ECSP)
+    if (!ecspInitialised) {
+        return;
+    }
+    static auto lastPoll = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (lastPoll.time_since_epoch().count() != 0 &&
+        now - lastPoll < std::max(config.ecspConfig.pollInterval, std::chrono::milliseconds(10))) {
+        return;
+    }
+    lastPoll = now;
+    TRDP_ECSPCTRL_STAT_T status{};
+    const TRDP_ERR_T statErr = tau_getEcspStat(&status);
+    if (statErr != TRDP_NO_ERR) {
+        logConfigError("tau_getEcspStat", statErr);
+    }
+#endif
 }
 
 bool TrdpEngine::processStackOnce() {
@@ -394,6 +592,9 @@ bool TrdpEngine::processStackOnce() {
             if (mdErr != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
             }
+        }
+        if (config.ecspConfig.enable) {
+            pollEcspStatus();
         }
 #endif
     }
@@ -475,12 +676,20 @@ bool TrdpEngine::start(const TrdpConfig &cfg) {
     std::lock_guard lock(stateMtx);
     const bool configChanged = !running.load() || config.rxInterface != cfg.rxInterface || config.txInterface != cfg.txInterface ||
                                config.hostsFile != cfg.hostsFile || config.enableDnr != cfg.enableDnr ||
-                               config.enableEcsp != cfg.enableEcsp || config.idleInterval != cfg.idleInterval;
+                               config.dnrMode != cfg.dnrMode || config.cacheConfig.enableUriCache != cfg.cacheConfig.enableUriCache ||
+                               config.cacheConfig.uriCacheTtl != cfg.cacheConfig.uriCacheTtl ||
+                               config.cacheConfig.uriCacheEntries != cfg.cacheConfig.uriCacheEntries ||
+                               config.ecspConfig.enable != cfg.ecspConfig.enable ||
+                               config.ecspConfig.pollInterval != cfg.ecspConfig.pollInterval ||
+                               config.ecspConfig.confirmTimeout != cfg.ecspConfig.confirmTimeout ||
+                               config.idleInterval != cfg.idleInterval;
 
     if (running.load()) {
         if (configChanged) {
             config = cfg;
             markTopologyChanged();
+            trimCaches();
+            updateEcspControl();
         }
         return true;
     }
@@ -623,6 +832,89 @@ void TrdpEngine::handleRxTelegram(std::uint32_t comId, const std::vector<std::ui
 void TrdpEngine::handleRxMdTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload) {
     std::cout << "[TRDP] MD telegram callback ComId=" << comId << " bytes=" << payload.size() << std::endl;
     handleRxTelegram(comId, payload);
+}
+
+std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool useCache) {
+    trimCaches();
+    if (useCache && config.cacheConfig.enableUriCache) {
+        if (const auto cached = fetchCached<std::uint32_t>(uriCache, uri)) {
+            return cached;
+        }
+    }
+
+#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+    TRDP_IP_ADDR_T addr{};
+    const TRDP_ERR_T err = tau_uri2Addr(uri.c_str(), &addr, useCache ? TRUE : FALSE);
+    if (err != TRDP_NO_ERR) {
+        logConfigError("tau_uri2Addr", err);
+        return std::nullopt;
+    }
+    if (config.cacheConfig.enableUriCache && useCache) {
+        setCacheEntry(uriCache[uri], static_cast<std::uint32_t>(addr));
+    }
+    return static_cast<std::uint32_t>(addr);
+#else
+    (void)useCache;
+    (void)uri;
+    return std::nullopt;
+#endif
+}
+
+std::optional<std::string> TrdpEngine::ipToUri(std::uint32_t ipAddr, bool useCache) {
+    trimCaches();
+    if (useCache && config.cacheConfig.enableUriCache) {
+        if (const auto cached = fetchCached<std::string>(ipCache, ipAddr)) {
+            return cached;
+        }
+    }
+
+#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+    std::array<char, 256> uriBuffer{};
+    const TRDP_ERR_T err = tau_addr2Uri(static_cast<TRDP_IP_ADDR_T>(ipAddr), uriBuffer.data(), uriBuffer.size(),
+                                        useCache ? TRUE : FALSE);
+    if (err != TRDP_NO_ERR) {
+        logConfigError("tau_addr2Uri", err);
+        return std::nullopt;
+    }
+    std::string resolved(uriBuffer.data());
+    if (config.cacheConfig.enableUriCache && useCache) {
+        setCacheEntry(ipCache[ipAddr], resolved);
+    }
+    return resolved;
+#else
+    (void)useCache;
+    (void)ipAddr;
+    return std::nullopt;
+#endif
+}
+
+std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngine::labelToIds(const std::string &label,
+                                                                                              bool useCache) {
+    trimCaches();
+    if (useCache && config.cacheConfig.enableUriCache) {
+        if (const auto cached = fetchCached<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>(labelCache, label)) {
+            return cached;
+        }
+    }
+
+#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+    TRDP_LABELS_T ids{};
+    const TRDP_ERR_T err = tau_label2Ids(label.c_str(), &ids, nullptr, nullptr);
+    if (err != TRDP_NO_ERR) {
+        logConfigError("tau_label2Ids", err);
+        return std::nullopt;
+    }
+    auto resolved = std::make_tuple(static_cast<std::uint32_t>(ids.cst), static_cast<std::uint32_t>(ids.veh),
+                                    static_cast<std::uint32_t>(ids.func));
+    if (config.cacheConfig.enableUriCache && useCache) {
+        setCacheEntry(labelCache[label], resolved);
+    }
+    return resolved;
+#else
+    (void)useCache;
+    (void)label;
+    return std::nullopt;
+#endif
 }
 
 #ifdef TRDP_STACK_PRESENT

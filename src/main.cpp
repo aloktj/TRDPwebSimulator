@@ -5,6 +5,7 @@
 #include <drogon/drogon.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -22,10 +23,16 @@ struct CliOptions {
     std::string trdpRxIface;
     std::string trdpTxIface;
     std::string trdpHostsFile;
+    std::string dnrMode{"common"};
+    bool enableUriCache{true};
+    std::uint32_t cacheTtlMs{30000};
+    std::uint32_t cacheEntries{128};
     std::string staticRoot;
     std::uint16_t threads{0};
     bool enableDnr{false};
     bool enableEcsp{false};
+    std::uint32_t ecspPollMs{1000};
+    std::uint32_t ecspConfirmTimeoutMs{5000};
     bool showHelp{false};
 };
 
@@ -38,6 +45,14 @@ std::optional<std::uint16_t> parsePort(const std::string &value) {
     } catch (const std::exception &) {
     }
     return std::nullopt;
+}
+
+std::optional<std::uint32_t> parseUint(const std::string &value) {
+    try {
+        return static_cast<std::uint32_t>(std::stoul(value));
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
 }
 
 bool parseBool(const std::string &value) {
@@ -63,8 +78,14 @@ void printUsage(const char *exe) {
               << "  --trdp-rx-iface <if>   Interface name for RX (env: TRDP_RX_IFACE)\n"
               << "  --trdp-tx-iface <if>   Interface name for TX (env: TRDP_TX_IFACE)\n"
               << "  --trdp-hosts-file <f>  Hosts file for DNR lookups (env: TRDP_HOSTS_FILE)\n"
+              << "  --dnr-mode <mode>      DNR thread mode: common|dedicated (env: TRDP_DNR_MODE)\n"
+              << "  --cache-ttl-ms <ms>    Cache TTL for URI/label lookups (env: TRDP_CACHE_TTL_MS)\n"
+              << "  --cache-entries <n>    Maximum cached URI/label entries (env: TRDP_CACHE_ENTRIES)\n"
+              << "  --disable-cache        Disable DNR lookup caching (env: TRDP_DISABLE_CACHE)\n"
               << "  --enable-dnr           Enable TAU DNR initialisation (env: TRDP_ENABLE_DNR)\n"
               << "  --enable-ecsp          Enable TAU ECSP control (env: TRDP_ENABLE_ECSP)\n"
+              << "  --ecsp-poll-ms <ms>    Poll interval for ECSP status (env: TRDP_ECSP_POLL_MS)\n"
+              << "  --ecsp-confirm-ms <ms> Confirm timeout for ECSP control (env: TRDP_ECSP_CONFIRM_MS)\n"
               << "  --static-root <path>   Directory for UI assets (env: TRDP_STATIC_ROOT)\n"
               << "  --threads <n>          Worker threads for Drogon (default: hardware concurrency)\n"
               << "  --help                 Show this help message\n";
@@ -91,11 +112,37 @@ CliOptions parseArgs(int argc, char **argv) {
     if (auto envHosts = readEnv("TRDP_HOSTS_FILE")) {
         opts.trdpHostsFile = *envHosts;
     }
+    if (auto envDnrMode = readEnv("TRDP_DNR_MODE")) {
+        opts.dnrMode = *envDnrMode;
+    }
+    if (auto envCacheTtl = readEnv("TRDP_CACHE_TTL_MS")) {
+        if (auto parsed = parseUint(*envCacheTtl)) {
+            opts.cacheTtlMs = *parsed;
+        }
+    }
+    if (auto envCacheEntries = readEnv("TRDP_CACHE_ENTRIES")) {
+        if (auto parsed = parseUint(*envCacheEntries)) {
+            opts.cacheEntries = *parsed;
+        }
+    }
+    if (auto envDisableCache = readEnv("TRDP_DISABLE_CACHE")) {
+        opts.enableUriCache = !parseBool(*envDisableCache);
+    }
     if (auto envDnr = readEnv("TRDP_ENABLE_DNR")) {
         opts.enableDnr = parseBool(*envDnr);
     }
     if (auto envEcsp = readEnv("TRDP_ENABLE_ECSP")) {
         opts.enableEcsp = parseBool(*envEcsp);
+    }
+    if (auto envEcspPoll = readEnv("TRDP_ECSP_POLL_MS")) {
+        if (auto parsed = parseUint(*envEcspPoll)) {
+            opts.ecspPollMs = *parsed;
+        }
+    }
+    if (auto envEcspConfirm = readEnv("TRDP_ECSP_CONFIRM_MS")) {
+        if (auto parsed = parseUint(*envEcspConfirm)) {
+            opts.ecspConfirmTimeoutMs = *parsed;
+        }
     }
     if (auto envStatic = readEnv("TRDP_STATIC_ROOT")) {
         opts.staticRoot = *envStatic;
@@ -123,10 +170,35 @@ CliOptions parseArgs(int argc, char **argv) {
         } else if (arg == "--trdp-hosts-file" && i + 1 < argc) {
             opts.trdpHostsFile = argv[i + 1];
             ++i;
+        } else if (arg == "--dnr-mode" && i + 1 < argc) {
+            opts.dnrMode = argv[i + 1];
+            ++i;
+        } else if (arg == "--cache-ttl-ms" && i + 1 < argc) {
+            if (auto parsed = parseUint(argv[i + 1])) {
+                opts.cacheTtlMs = *parsed;
+            }
+            ++i;
+        } else if (arg == "--cache-entries" && i + 1 < argc) {
+            if (auto parsed = parseUint(argv[i + 1])) {
+                opts.cacheEntries = *parsed;
+            }
+            ++i;
+        } else if (arg == "--disable-cache") {
+            opts.enableUriCache = false;
         } else if (arg == "--enable-dnr") {
             opts.enableDnr = true;
         } else if (arg == "--enable-ecsp") {
             opts.enableEcsp = true;
+        } else if (arg == "--ecsp-poll-ms" && i + 1 < argc) {
+            if (auto parsed = parseUint(argv[i + 1])) {
+                opts.ecspPollMs = *parsed;
+            }
+            ++i;
+        } else if (arg == "--ecsp-confirm-ms" && i + 1 < argc) {
+            if (auto parsed = parseUint(argv[i + 1])) {
+                opts.ecspConfirmTimeoutMs = *parsed;
+            }
+            ++i;
         } else if (arg == "--threads" && i + 1 < argc) {
             if (auto parsed = parsePort(argv[i + 1])) {
                 opts.threads = *parsed;
@@ -151,11 +223,33 @@ void applyTrdpEnv(const CliOptions &opts) {
     if (!opts.trdpHostsFile.empty()) {
         setenv("TRDP_HOSTS_FILE", opts.trdpHostsFile.c_str(), 1);
     }
+    if (!opts.dnrMode.empty()) {
+        setenv("TRDP_DNR_MODE", opts.dnrMode.c_str(), 1);
+    }
+    if (!opts.enableUriCache) {
+        setenv("TRDP_DISABLE_CACHE", "1", 1);
+    }
+    if (opts.cacheTtlMs > 0U) {
+        const auto ttl = std::to_string(opts.cacheTtlMs);
+        setenv("TRDP_CACHE_TTL_MS", ttl.c_str(), 1);
+    }
+    if (opts.cacheEntries > 0U) {
+        const auto entries = std::to_string(opts.cacheEntries);
+        setenv("TRDP_CACHE_ENTRIES", entries.c_str(), 1);
+    }
     if (opts.enableDnr) {
         setenv("TRDP_ENABLE_DNR", "1", 1);
     }
     if (opts.enableEcsp) {
         setenv("TRDP_ENABLE_ECSP", "1", 1);
+    }
+    if (opts.ecspPollMs > 0U) {
+        const auto poll = std::to_string(opts.ecspPollMs);
+        setenv("TRDP_ECSP_POLL_MS", poll.c_str(), 1);
+    }
+    if (opts.ecspConfirmTimeoutMs > 0U) {
+        const auto confirm = std::to_string(opts.ecspConfirmTimeoutMs);
+        setenv("TRDP_ECSP_CONFIRM_MS", confirm.c_str(), 1);
     }
 }
 
@@ -225,13 +319,18 @@ int main(int argc, char **argv) {
         app.setThreadNum(opts.threads);
     }
 
-    TrdpEngine::TrdpConfig trdpConfig{
-        .rxInterface = opts.trdpRxIface,
-        .txInterface = opts.trdpTxIface,
-        .hostsFile = opts.trdpHostsFile,
-        .enableDnr = opts.enableDnr,
-        .enableEcsp = opts.enableEcsp,
-    };
+    TrdpEngine::TrdpConfig trdpConfig{};
+    trdpConfig.rxInterface = opts.trdpRxIface;
+    trdpConfig.txInterface = opts.trdpTxIface;
+    trdpConfig.hostsFile = opts.trdpHostsFile;
+    trdpConfig.enableDnr = opts.enableDnr;
+    trdpConfig.dnrMode = opts.dnrMode == "dedicated" ? TrdpEngine::DnrMode::DedicatedThread : TrdpEngine::DnrMode::CommonThread;
+    trdpConfig.cacheConfig.enableUriCache = opts.enableUriCache;
+    trdpConfig.cacheConfig.uriCacheTtl = std::chrono::milliseconds(opts.cacheTtlMs);
+    trdpConfig.cacheConfig.uriCacheEntries = opts.cacheEntries;
+    trdpConfig.ecspConfig.enable = opts.enableEcsp;
+    trdpConfig.ecspConfig.pollInterval = std::chrono::milliseconds(opts.ecspPollMs);
+    trdpConfig.ecspConfig.confirmTimeout = std::chrono::milliseconds(opts.ecspConfirmTimeoutMs);
 
     if (!TrdpEngine::instance().start(trdpConfig)) {
         std::cerr << "Failed to start TRDP engine" << std::endl;

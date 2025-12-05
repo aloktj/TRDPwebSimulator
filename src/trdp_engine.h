@@ -9,8 +9,11 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
+#include <variant>
 #include <vector>
 
 #ifdef TRDP_STACK_PRESENT
@@ -33,12 +36,28 @@ class TrdpEngine {
   public:
     static TrdpEngine &instance();
 
+    enum class DnrMode { CommonThread, DedicatedThread };
+
+    struct CacheConfig {
+        bool enableUriCache{true};
+        std::chrono::milliseconds uriCacheTtl{std::chrono::seconds(30)};
+        std::size_t uriCacheEntries{128};
+    };
+
+    struct EcspConfig {
+        bool enable{false};
+        std::chrono::milliseconds pollInterval{std::chrono::seconds(1)};
+        std::chrono::milliseconds confirmTimeout{std::chrono::seconds(5)};
+    };
+
     struct TrdpConfig {
         std::string rxInterface;
         std::string txInterface;
         std::string hostsFile;
         bool enableDnr{false};
-        bool enableEcsp{false};
+        DnrMode dnrMode{DnrMode::CommonThread};
+        CacheConfig cacheConfig;
+        EcspConfig ecspConfig;
         // How often the worker thread should wake up when no events are pending.
         std::chrono::milliseconds idleInterval{std::chrono::milliseconds(50)};
     };
@@ -59,6 +78,12 @@ class TrdpEngine {
 
     // Feed a freshly received MD telegram into the registry/runtime.
     void handleRxMdTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
+
+    // TAU helper wrappers (no-ops when the TRDP stack is not present)
+    std::optional<std::uint32_t> uriToIp(const std::string &uri, bool useCache = true);
+    std::optional<std::string> ipToUri(std::uint32_t ipAddr, bool useCache = true);
+    std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> labelToIds(const std::string &label,
+                                                                                      bool useCache = true);
 
   private:
     TrdpEngine() = default;
@@ -86,6 +111,9 @@ class TrdpEngine {
     bool processStackOnce();
     void buildEndpoints();
     void processingLoop();
+    bool initialiseDnr();
+    void initialiseEcsp();
+    void updateEcspControl();
 
     EndpointHandle *findEndpoint(std::uint32_t comId);
 
@@ -99,6 +127,8 @@ class TrdpEngine {
     TRDP_APP_SESSION_T mdSession{};
     bool tauInitialised{false};
     std::vector<UINT8> heapStorage;
+    bool dnrInitialised{false};
+    bool ecspInitialised{false};
 #endif
     std::uint32_t etbTopoCounter{0};
     std::uint32_t opTrainTopoCounter{0};
@@ -108,7 +138,42 @@ class TrdpEngine {
     std::mutex stateMtx;
     std::condition_variable cv;
     std::map<std::uint32_t, EndpointHandle> endpoints;
+
+    struct CacheEntry {
+        using Payload = std::variant<std::uint32_t, std::string, std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>;
+
+        std::chrono::steady_clock::time_point expiresAt;
+        Payload payload;
+    };
+
+    std::map<std::string, CacheEntry> uriCache;
+    std::map<std::uint32_t, CacheEntry> ipCache;
+    std::map<std::string, CacheEntry> labelCache;
+
+    void trimCaches();
+    void updateCacheLimits();
+    void setCacheEntry(CacheEntry &entry, CacheEntry::Payload value);
+    template <typename T, typename Map, typename Key>
+    std::optional<T> fetchCached(Map &map, const Key &key) const;
+    void logConfigError(const std::string &context, TRDP_ERR_T err) const;
+    void pollEcspStatus();
 };
+
+template <typename T, typename Map, typename Key>
+std::optional<T> TrdpEngine::fetchCached(Map &map, const Key &key) const {
+    auto it = map.find(key);
+    if (it == map.end()) {
+        return std::nullopt;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= it->second.expiresAt) {
+        return std::nullopt;
+    }
+    if (const auto *value = std::get_if<T>(&it->second.payload)) {
+        return *value;
+    }
+    return std::nullopt;
+}
 
 } // namespace trdp
 
