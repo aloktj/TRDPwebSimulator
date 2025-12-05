@@ -6,9 +6,12 @@
 #include <array>
 #include <chrono>
 #include <cerrno>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <netinet/in.h>
 #include <sys/select.h>
 #include <type_traits>
 #include <utility>
@@ -177,6 +180,69 @@ std::vector<std::uint8_t> encodeFields(const DatasetDef &dataset, const std::map
 
     return buffer;
 }
+
+#ifdef TRDP_STACK_PRESENT
+std::string formatIp(std::uint32_t ip) {
+    in_addr addr{};
+    addr.s_addr = htonl(ip);
+    char buffer[INET_ADDRSTRLEN] = {0};
+    if (inet_ntop(AF_INET, &addr, buffer, sizeof(buffer)) == nullptr) {
+        return "<invalid IPv4>";
+    }
+    return buffer;
+}
+
+bool ipAssignedToLocalInterface(std::uint32_t ip) {
+    if (ip == 0U) {
+        return true;
+    }
+
+    ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || ifaddr == nullptr) {
+        return false;
+    }
+
+    bool found = false;
+    for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        const auto *addr = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
+        if (addr->sin_addr.s_addr == htonl(ip)) {
+            found = true;
+            break;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return found;
+}
+
+std::string describeTrdpError(TRDP_ERR_T err) {
+    switch (err) {
+    case TRDP_NO_ERR:
+        return "TRDP_NO_ERR";
+    case TRDP_PARAM_ERR:
+        return "TRDP_PARAM_ERR (parameter missing or out of range)";
+    case TRDP_INIT_ERR:
+        return "TRDP_INIT_ERR (stack not initialised)";
+    case TRDP_NOINIT_ERR:
+        return "TRDP_NOINIT_ERR (invalid handle)";
+    case TRDP_TIMEOUT_ERR:
+        return "TRDP_TIMEOUT_ERR (operation timed out)";
+    case TRDP_SOCK_ERR:
+        return "TRDP_SOCK_ERR (socket error or unsupported option)";
+    case TRDP_IO_ERR:
+        return "TRDP_IO_ERR (socket I/O error)";
+    case TRDP_STATE_ERR:
+        return "TRDP_STATE_ERR (call in wrong state)";
+    case TRDP_UNKNOWN_ERR:
+        return "TRDP_UNKNOWN_ERR";
+    default:
+        return std::string{"TRDP error code "} + std::to_string(err);
+    }
+}
+#endif
 
 std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
                                                const std::map<std::string, FieldValue> &fields) {
@@ -386,7 +452,13 @@ std::optional<TrdpEngine::StackSelectContext> TrdpEngine::prepareSelectContext(T
 #endif
 
 void TrdpEngine::logConfigError(const std::string &context, TRDP_ERR_T err) const {
-    std::cerr << "[TRDP] " << context << " failed: " << err;
+    std::cerr << "[TRDP] " << context << " failed: " <<
+#ifdef TRDP_STACK_PRESENT
+        describeTrdpError(err)
+#else
+        err
+#endif
+        ;
     if (!config.hostsFile.empty()) {
         std::cerr << " (hosts file: " << config.hostsFile << ")";
     }
@@ -674,6 +746,15 @@ void TrdpEngine::buildEndpoints() {
             handle.pdHandleReady = pdSessionInitialised;
 #ifdef TRDP_STACK_PRESENT
             if (handle.pdHandleReady && stackAvailable) {
+                if (telegram.direction == Direction::Tx && !ipAssignedToLocalInterface(telegram.srcIp)) {
+                    std::cerr << "[TRDP] Source IP " << formatIp(telegram.srcIp) << " for ComId " << telegram.comId
+                              << " is not configured on this host; TRDP will reject the publish request. "
+                              << "Update the XML or set TRDP_TX_IFACE/TRDP_RX_IFACE to match a local IPv4 address."
+                              << std::endl;
+                    handle.pdHandleReady = false;
+                }
+            }
+            if (handle.pdHandleReady && stackAvailable) {
                 TRDP_SEND_PARAM_T sendParam{};
                 sendParam.ttl = telegram.ttl;
                 TRDP_COM_PARAM_T recvParams{};
@@ -696,8 +777,8 @@ void TrdpEngine::buildEndpoints() {
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
-                    std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": " << pdErr
-                              << std::endl;
+                    std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": "
+                              << describeTrdpError(pdErr) << std::endl;
                 }
             }
 #endif
