@@ -110,8 +110,24 @@ class TrdpEngine {
     bool initialiseTrdpStack();
     void teardownTrdpStack();
     std::chrono::milliseconds stackIntervalHint() const;
+#ifdef TRDP_STACK_PRESENT
+    struct StackSelectContext {
+        TRDP_FDS_T readFds{};
+        TRDP_FDS_T writeFds{};
+        INT32 maxFd{-1};
+        TRDP_TIME_T interval{};
+        bool valid{false};
+    };
+    std::optional<StackSelectContext> prepareSelectContext(TRDP_APP_SESSION_T session) const;
+#endif
     void markTopologyChanged();
-    bool processStackOnce();
+    bool processStackOnce(
+#ifdef TRDP_STACK_PRESENT
+        const StackSelectContext *pdContext, const StackSelectContext *mdContext
+#else
+        void *pdContext, void *mdContext
+#endif
+    );
     void buildEndpoints();
     void processingLoop();
     bool initialiseDnr();
