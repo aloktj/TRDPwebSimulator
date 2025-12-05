@@ -329,11 +329,11 @@ bool TrdpEngine::initialiseTrdpStack() {
 
     const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
     TRDP_PD_CONFIG_T pdDefault{};
-    pdDefault.port = pdDefaultPort;
+    pdDefault.udpPort = pdDefaultPort;
     pdDefault.sendParam.ttl = 64U;
 
     TRDP_MD_CONFIG_T mdDefault{};
-    mdDefault.port = resolveDefaultPort(TelegramType::MD);
+    mdDefault.udpPort = resolveDefaultPort(TelegramType::MD);
     mdDefault.sendParam.ttl = 64U;
 
     const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, &pdDefault, nullptr, nullptr);
