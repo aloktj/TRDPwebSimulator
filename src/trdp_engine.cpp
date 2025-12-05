@@ -148,6 +148,11 @@ std::vector<std::uint8_t> encodeFields(const DatasetDef &dataset, const std::map
     return buffer;
 }
 
+std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
+                                               const std::map<std::string, FieldValue> &fields) {
+    return encodeFields(runtime.dataset(), fields);
+}
+
 void decodeFieldsIntoRuntime(const DatasetDef &dataset, TelegramRuntime &runtime, const std::vector<std::uint8_t> &payload) {
     runtime.overwriteBuffer(payload);
     for (const auto &field : dataset.fields) {
@@ -189,6 +194,10 @@ bool TrdpEngine::initialiseTrdpStack() {
     // Keep the logging explicit so failures are visible in headless runs.
     std::cout << "[TRDP] Initialising stack..." << std::endl;
     // Future: add actual TRDP init calls and error checks here.
+    pdSessionInitialised = true;
+    mdSessionInitialised = true;
+    std::cout << "[TRDP] PD session handle ready" << std::endl;
+    std::cout << "[TRDP] MD session handle ready" << std::endl;
     return true;
 }
 
@@ -202,6 +211,24 @@ void TrdpEngine::buildEndpoints() {
             continue;
         }
         EndpointHandle handle{.def = telegram, .runtime = runtime};
+
+        if (telegram.type == TelegramType::MD) {
+            handle.mdHandleReady = mdSessionInitialised;
+            if (handle.mdHandleReady) {
+                std::cout << "[TRDP] Binding MD endpoint for ComId " << telegram.comId << std::endl;
+            } else {
+                std::cerr << "[TRDP] MD session not initialised; unable to bind ComId " << telegram.comId
+                          << std::endl;
+            }
+        } else {
+            handle.pdHandleReady = pdSessionInitialised;
+            if (handle.pdHandleReady) {
+                std::cout << "[TRDP] Binding PD endpoint for ComId " << telegram.comId << std::endl;
+            } else {
+                std::cerr << "[TRDP] PD session not initialised; unable to bind ComId " << telegram.comId
+                          << std::endl;
+            }
+        }
         endpoints.emplace(telegram.comId, std::move(handle));
     }
 }
@@ -242,6 +269,11 @@ void TrdpEngine::stop() {
         worker.join();
     }
     running.store(false);
+    pdSessionInitialised = false;
+    mdSessionInitialised = false;
+    endpoints.clear();
+    std::cout << "[TRDP] MD session handle released" << std::endl;
+    std::cout << "[TRDP] PD session handle released" << std::endl;
     std::cout << "[TRDP] Stack stopped" << std::endl;
 }
 
@@ -268,12 +300,24 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         endpoint->runtime->setFieldValue(name, value);
     }
 
-    const auto mergedFields = endpoint->runtime->snapshotFields();
-    const auto buffer = encodeFields(endpoint->runtime->dataset(), mergedFields);
+    const auto mergedFields = mergeRuntimeFields(*endpoint->runtime, txFields);
+    const auto buffer = encodeFieldsToBuffer(*endpoint->runtime, mergedFields);
     endpoint->runtime->overwriteBuffer(buffer);
 
     // TODO: Replace with actual tlp_put()/tlm_put() calls once TRDP bindings are available.
-    std::cout << "[TRDP] Sending telegram ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+    if (endpoint->def.type == TelegramType::MD) {
+        if (!endpoint->mdHandleReady) {
+            std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
+            return false;
+        }
+        std::cout << "[TRDP] Sending MD telegram ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+    } else {
+        if (!endpoint->pdHandleReady) {
+            std::cerr << "[TRDP] PD session not available; drop TX ComId " << comId << std::endl;
+            return false;
+        }
+        std::cout << "[TRDP] Sending PD telegram ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+    }
 
     if (auto *hub = TelegramHub::instance()) {
         hub->publishTxConfirmation(comId, mergedFields);
@@ -297,6 +341,11 @@ void TrdpEngine::handleRxTelegram(std::uint32_t comId, const std::vector<std::ui
     if (auto *hub = TelegramHub::instance()) {
         hub->publishRxUpdate(comId, endpoint->runtime->snapshotFields());
     }
+}
+
+void TrdpEngine::handleRxMdTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload) {
+    std::cout << "[TRDP] MD telegram callback ComId=" << comId << " bytes=" << payload.size() << std::endl;
+    handleRxTelegram(comId, payload);
 }
 
 void TrdpEngine::processingLoop() {
