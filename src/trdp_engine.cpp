@@ -24,6 +24,7 @@
 #endif
 #include <trdp/api/tau_ctrl.h>
 #include <trdp/api/trdp_if_light.h>
+#include <trdp/api/iec61375-2-3.h>
 #define TRDP_HAS_TAU_DNR 0
 #endif
 
@@ -382,11 +383,19 @@ bool TrdpEngine::initialiseTrdpStack() {
     pdDefault.port = pdDefaultPort;
     pdDefault.sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
     pdDefault.sendParam.ttl = 64U;
+    pdDefault.flags = TRDP_FLAGS_NONE;
+    pdDefault.timeout = TRDP_PD_DEFAULT_TIMEOUT;
+    pdDefault.toBehavior = TRDP_TO_SET_TO_ZERO;
 
     TRDP_MD_CONFIG_T mdDefault{};
     mdDefault.udpPort = resolveDefaultPort(TelegramType::MD);
     mdDefault.sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
     mdDefault.sendParam.ttl = 64U;
+    mdDefault.flags = TRDP_FLAGS_NONE;
+    mdDefault.replyTimeout = TRDP_MD_DEFAULT_REPLY_TIMEOUT;
+    mdDefault.confirmTimeout = TRDP_MD_DEFAULT_CONFIRM_TIMEOUT;
+    mdDefault.connectTimeout = TRDP_MD_DEFAULT_CONNECTION_TIMEOUT;
+    mdDefault.sendingTimeout = TRDP_MD_DEFAULT_SENDING_TIMEOUT;
 
     const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, sessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
     if (pdErr != TRDP_NO_ERR) {
@@ -833,6 +842,7 @@ void TrdpEngine::buildEndpoints() {
                 sendParam.ttl = telegram.ttl;
                 TRDP_COM_PARAM_T recvParams = TRDP_PD_DEFAULT_SEND_PARAM;
                 recvParams.ttl = telegram.ttl;
+                const TRDP_FLAGS_T pdFlags = TRDP_FLAGS_NONE;
                 const auto buffer = runtime->getBufferCopy();
                 TRDP_ERR_T pdErr{};
                 if (telegram.direction == Direction::Tx) {
@@ -840,13 +850,13 @@ void TrdpEngine::buildEndpoints() {
                     constexpr UINT32 redundancyId = 0U;
                     pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, this, nullptr, 0U, telegram.comId,
                                         etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, intervalMs,
-                                        redundancyId, TRDP_FLAGS_DEFAULT, &sendParam, buffer.data(),
+                                        redundancyId, pdFlags, &sendParam, buffer.data(),
                                         static_cast<UINT32>(buffer.size()));
                 } else {
                     constexpr UINT32 redundancyId = 0U;
                     pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
                                            telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp, redundancyId,
-                                           telegram.destIp, TRDP_FLAGS_DEFAULT, &recvParams, 0U,
+                                           telegram.destIp, pdFlags, &recvParams, 0U,
                                            static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
@@ -978,7 +988,7 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         }
 #ifdef TRDP_STACK_PRESENT
         if (stackAvailable) {
-            TRDP_SEND_PARAM_T sendParam{};
+            TRDP_SEND_PARAM_T sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
             sendParam.ttl = endpoint->def.ttl;
             TRDP_ERR_T err = tlm_request(mdSession, this, mdReceiveCallback, &endpoint->mdSessionId, comId,
                                          etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp, endpoint->def.destIp,
