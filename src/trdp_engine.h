@@ -13,6 +13,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef TRDP_STACK_PRESENT
+#include <trdp/api/trdp_if_light.h>
+#endif
+
 namespace trdp {
 
 /**
@@ -83,6 +87,12 @@ class TrdpEngine {
     bool pdSessionInitialised{false};
     bool mdSessionInitialised{false};
     bool stackAvailable{false};
+#ifdef TRDP_STACK_PRESENT
+    TRDP_APP_SESSION_T pdSession{};
+    TRDP_APP_SESSION_T mdSession{};
+    bool tauInitialised{false};
+    std::vector<UINT8> heapStorage;
+#endif
     std::uint32_t etbTopoCounter{0};
     std::uint32_t opTrainTopoCounter{0};
     TrdpConfig config;

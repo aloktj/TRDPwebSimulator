@@ -7,96 +7,13 @@
 #include <cstring>
 #include <iostream>
 
+#ifdef TRDP_STACK_PRESENT
+#include <tau_ctrl.h>
+#include <trdp/api/trdp_if_light.h>
+#endif
+
 namespace trdp {
 namespace {
-
-/**
- * Lightweight façade over the TRDP/TAU stack calls we described during analysis.
- *
- * The implementation remains a stub so the application can build without the
- * native stack present, but the methods mirror the intended flow:
- *  - initialise() represents tlc_init/tau_init and session bring-up
- *  - bindPd/bindMd mirror tlp_publish/tlp_subscribe/tlm_addListener
- *  - getProcessInterval/processTick mirror tlc_getInterval/tlc_process
- */
-class TrdpStackFacade {
-  public:
-    bool initialise()
-    {
-        if (initialised) {
-            return true;
-        }
-        std::cout << "[TRDP] tlc_init/tau_init stubbed initialisation" << std::endl;
-        initialised = true;
-        lastProcess = std::chrono::steady_clock::now();
-        return true;
-    }
-
-    void shutdown()
-    {
-        if (!initialised) {
-            return;
-        }
-        std::cout << "[TRDP] tlc_terminate/tau_terminate stubbed shutdown" << std::endl;
-        initialised = false;
-    }
-
-    bool bindPdEndpoint(const TelegramDef &telegram)
-    {
-        if (!initialised) {
-            return false;
-        }
-        std::cout << "[TRDP] tlp_publish/tlp_subscribe stub for ComId " << telegram.comId << std::endl;
-        return true;
-    }
-
-    bool bindMdEndpoint(const TelegramDef &telegram)
-    {
-        if (!initialised) {
-            return false;
-        }
-        std::cout << "[TRDP] tlm_addListener/tlm_request stub for ComId " << telegram.comId << std::endl;
-        return true;
-    }
-
-    bool sendTelegram(const TelegramDef &telegram, const std::vector<std::uint8_t> &buffer)
-    {
-        if (!initialised) {
-            return false;
-        }
-        const char *type = telegram.type == TelegramType::MD ? "MD" : "PD";
-        std::cout << "[TRDP] " << type << " send stub ComId=" << telegram.comId << " bytes=" << buffer.size()
-                  << std::endl;
-        return true;
-    }
-
-    std::chrono::milliseconds getProcessInterval()
-    {
-        // emulate tlc_getInterval/tlp_getInterval returning the next wait value
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastProcess);
-        if (elapsed >= defaultInterval) {
-            return std::chrono::milliseconds(0);
-        }
-        return defaultInterval - elapsed;
-    }
-
-    void processTick()
-    {
-        if (!initialised) {
-            return;
-        }
-        std::cout << "[TRDP] tlc_process/tlp_processReceive stub tick" << std::endl;
-        lastProcess = std::chrono::steady_clock::now();
-    }
-
-  private:
-    bool initialised{false};
-    std::chrono::steady_clock::time_point lastProcess{};
-    const std::chrono::milliseconds defaultInterval{50};
-};
-
-TrdpStackFacade stackFacade;
 
 template <typename T> T readLe(const std::uint8_t *data) {
     T value{};
@@ -278,29 +195,71 @@ bool TrdpEngine::bootstrapRegistry() {
 }
 
 bool TrdpEngine::initialiseTrdpStack() {
-    // Placeholder for tlc_init()/tau_init() depending on the TRDP stack presence.
-    // Keep the logging explicit so failures are visible in headless runs.
     std::cout << "[TRDP] Initialising stack..." << std::endl;
-    if (stackAvailable) {
-        std::cout << "[TRDP] Requested RX iface: " << (config.rxInterface.empty() ? "<default>" : config.rxInterface)
-                  << std::endl;
-        std::cout << "[TRDP] Requested TX iface: " << (config.txInterface.empty() ? "<default>" : config.txInterface)
-                  << std::endl;
-        if (!config.hostsFile.empty()) {
-            std::cout << "[TRDP] Using hosts file: " << config.hostsFile << std::endl;
-        }
-        if (config.enableDnr) {
-            std::cout << "[TRDP] DNR initialisation enabled" << std::endl;
-        }
-        if (config.enableEcsp) {
-            std::cout << "[TRDP] ECSP control enabled" << std::endl;
-        }
-        // Future: add actual TRDP init calls and error checks here.
-    } else {
+    if (!stackAvailable) {
         std::cout << "[TRDP] Stack not available at build time; running in stub mode" << std::endl;
+        pdSessionInitialised = true;
+        mdSessionInitialised = true;
+        return true;
+    }
+
+#ifdef TRDP_STACK_PRESENT
+    constexpr std::size_t kHeapSize = 64 * 1024;
+    heapStorage.assign(kHeapSize, 0U);
+
+    TRDP_MEM_CONFIG_T memConfig{};
+    memConfig.p = heapStorage.data();
+    memConfig.size = static_cast<UINT32>(heapStorage.size());
+
+    const TRDP_ERR_T initErr = tlc_init(nullptr, nullptr, &memConfig);
+    if (initErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] tlc_init failed: " << initErr << std::endl;
+        return false;
+    }
+
+    const TRDP_ERR_T tauErr = tau_init();
+    if (tauErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] tau_init failed: " << tauErr << std::endl;
+    } else {
+        tauInitialised = true;
+    }
+
+    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, nullptr, nullptr, nullptr, nullptr);
+    if (pdErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
+        tlc_terminate();
+        if (tauInitialised) {
+            tau_terminate();
+            tauInitialised = false;
+        }
+        return false;
     }
     pdSessionInitialised = true;
+
+    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, nullptr, nullptr, nullptr, nullptr);
+    if (mdErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
+        tlc_closeSession(pdSession);
+        pdSessionInitialised = false;
+        tlc_terminate();
+        if (tauInitialised) {
+            tau_terminate();
+            tauInitialised = false;
+        }
+        return false;
+    }
     mdSessionInitialised = true;
+
+    // Apply any updated session defaults or interface selections.
+    (void)tlc_configSession(pdSession, nullptr, nullptr, nullptr);
+    (void)tlc_configSession(mdSession, nullptr, nullptr, nullptr);
+    (void)tlc_updateSession(pdSession, &pdSession, 0U);
+    (void)tlc_updateSession(mdSession, &mdSession, 0U);
+#else
+    pdSessionInitialised = true;
+    mdSessionInitialised = true;
+#endif
+
     std::cout << "[TRDP] PD session handle ready" << std::endl;
     std::cout << "[TRDP] MD session handle ready" << std::endl;
     return true;
@@ -311,20 +270,39 @@ void TrdpEngine::teardownTrdpStack() {
         return;
     }
 
-    // TODO: call tlc_closeSession/tlc_terminate and TAU tear-down functions when available.
-    if (mdSessionInitialised) {
-        std::cout << "[TRDP] Shutting down MD session" << std::endl;
+    if (stackAvailable) {
+#ifdef TRDP_STACK_PRESENT
+        if (mdSessionInitialised) {
+            tlc_configSession(mdSession, nullptr, nullptr, nullptr);
+            (void)tlc_closeSession(mdSession);
+        }
+        if (pdSessionInitialised) {
+            tlc_configSession(pdSession, nullptr, nullptr, nullptr);
+            (void)tlc_closeSession(pdSession);
+        }
+        tlc_terminate();
+        if (tauInitialised) {
+            tau_terminate();
+            tauInitialised = false;
+        }
+#else
+        std::cout << "[TRDP] Stack not available; stub teardown" << std::endl;
+#endif
     }
-    if (pdSessionInitialised) {
-        std::cout << "[TRDP] Shutting down PD session" << std::endl;
-    }
+
     mdSessionInitialised = false;
     pdSessionInitialised = false;
 }
 
 std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
-    // When the real stack is present, this should use tlc_getInterval/tlp_getInterval.
-    // Until then, expose the configured idle interval to keep the worker responsive.
+    if (stackAvailable) {
+#ifdef TRDP_STACK_PRESENT
+        TRDP_TIME_T interval{};
+        if (pdSessionInitialised && tlc_getInterval(pdSession, &interval, nullptr) == TRDP_NO_ERR) {
+            return std::chrono::milliseconds(interval.tv_usec / 1000 + interval.tv_sec * 1000);
+        }
+#endif
+    }
     if (config.idleInterval.count() > 0) {
         return config.idleInterval;
     }
@@ -337,10 +315,18 @@ bool TrdpEngine::processStackOnce() {
     }
 
     if (stackAvailable) {
-        // TODO: drive tlc_process()/tlp_processReceive()/tlp_processSend() here.
+#ifdef TRDP_STACK_PRESENT
         // Topology counters should be updated before processing when they change.
         (void)etbTopoCounter;
         (void)opTrainTopoCounter;
+        TRDP_TIME_T rcvTime{};
+        if (pdSessionInitialised) {
+            tlc_process(pdSession, &rcvTime, nullptr);
+        }
+        if (mdSessionInitialised) {
+            tlc_process(mdSession, &rcvTime, nullptr);
+        }
+#endif
     }
 
     return true;
@@ -358,7 +344,7 @@ void TrdpEngine::buildEndpoints() {
         EndpointHandle handle{.def = telegram, .runtime = runtime};
 
         if (telegram.type == TelegramType::MD) {
-            handle.mdHandleReady = mdSessionInitialised && stackFacade.bindMdEndpoint(telegram);
+            handle.mdHandleReady = mdSessionInitialised;
             if (handle.mdHandleReady) {
                 std::cout << "[TRDP] Binding MD endpoint for ComId " << telegram.comId << std::endl;
             } else {
@@ -366,7 +352,7 @@ void TrdpEngine::buildEndpoints() {
                           << std::endl;
             }
         } else {
-            handle.pdHandleReady = pdSessionInitialised && stackFacade.bindPdEndpoint(telegram);
+            handle.pdHandleReady = pdSessionInitialised;
             if (handle.pdHandleReady) {
                 std::cout << "[TRDP] Binding PD endpoint for ComId " << telegram.comId << std::endl;
             } else {
@@ -454,25 +440,18 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
     const auto buffer = encodeFieldsToBuffer(*endpoint->runtime, mergedFields);
     endpoint->runtime->overwriteBuffer(buffer);
 
-    // TODO: Replace with actual tlp_put()/tlm_put() calls once TRDP bindings are available.
     if (endpoint->def.type == TelegramType::MD) {
         if (!endpoint->mdHandleReady) {
             std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
             return false;
         }
-        if (!stackFacade.sendTelegram(endpoint->def, buffer)) {
-            std::cerr << "[TRDP] MD send failed for ComId " << comId << std::endl;
-            return false;
-        }
+        std::cout << "[TRDP] MD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
     } else {
         if (!endpoint->pdHandleReady) {
             std::cerr << "[TRDP] PD session not available; drop TX ComId " << comId << std::endl;
             return false;
         }
-        if (!stackFacade.sendTelegram(endpoint->def, buffer)) {
-            std::cerr << "[TRDP] PD send failed for ComId " << comId << std::endl;
-            return false;
-        }
+        std::cout << "[TRDP] PD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
     }
 
     if (auto *hub = TelegramHub::instance()) {
