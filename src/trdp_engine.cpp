@@ -6,9 +6,12 @@
 #include <array>
 #include <chrono>
 #include <cerrno>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <netinet/in.h>
 #include <sys/select.h>
 #include <type_traits>
 #include <utility>
@@ -178,10 +181,86 @@ std::vector<std::uint8_t> encodeFields(const DatasetDef &dataset, const std::map
     return buffer;
 }
 
+#ifdef TRDP_STACK_PRESENT
+std::string formatIp(std::uint32_t ip) {
+    in_addr addr{};
+    addr.s_addr = htonl(ip);
+    char buffer[INET_ADDRSTRLEN] = {0};
+    if (inet_ntop(AF_INET, &addr, buffer, sizeof(buffer)) == nullptr) {
+        return "<invalid IPv4>";
+    }
+    return buffer;
+}
+
+bool ipAssignedToLocalInterface(std::uint32_t ip) {
+    if (ip == 0U) {
+        return true;
+    }
+
+    ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || ifaddr == nullptr) {
+        return false;
+    }
+
+    bool found = false;
+    for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        const auto *addr = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
+        if (addr->sin_addr.s_addr == htonl(ip)) {
+            found = true;
+            break;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return found;
+}
+
+std::string describeTrdpError(TRDP_ERR_T err) {
+    switch (err) {
+    case TRDP_NO_ERR:
+        return "TRDP_NO_ERR";
+    case TRDP_PARAM_ERR:
+        return "TRDP_PARAM_ERR (parameter missing or out of range)";
+    case TRDP_INIT_ERR:
+        return "TRDP_INIT_ERR (stack not initialised)";
+    case TRDP_NOINIT_ERR:
+        return "TRDP_NOINIT_ERR (invalid handle)";
+    case TRDP_TIMEOUT_ERR:
+        return "TRDP_TIMEOUT_ERR (operation timed out)";
+    case TRDP_SOCK_ERR:
+        return "TRDP_SOCK_ERR (socket error or unsupported option)";
+    case TRDP_IO_ERR:
+        return "TRDP_IO_ERR (socket I/O error)";
+    case TRDP_STATE_ERR:
+        return "TRDP_STATE_ERR (call in wrong state)";
+    case TRDP_UNKNOWN_ERR:
+        return "TRDP_UNKNOWN_ERR";
+    default:
+        return std::string{"TRDP error code "} + std::to_string(err);
+    }
+}
+#endif
+
 std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
                                                const std::map<std::string, FieldValue> &fields) {
     return encodeFields(runtime.dataset(), fields);
 }
+
+#ifdef TRDP_STACK_PRESENT
+constexpr std::uint16_t kDefaultTrdpPort = 17224;
+
+std::uint16_t resolveDefaultPort(TelegramType type) {
+    for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
+        if (telegram.type == type && telegram.destPort != 0U) {
+            return telegram.destPort;
+        }
+    }
+    return kDefaultTrdpPort;
+}
+#endif
 
 void decodeFieldsIntoRuntime(const DatasetDef &dataset, TelegramRuntime &runtime, const std::vector<std::uint8_t> &payload) {
     runtime.overwriteBuffer(payload);
@@ -248,7 +327,16 @@ bool TrdpEngine::initialiseTrdpStack() {
         return false;
     }
 
-    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, nullptr, nullptr, nullptr);
+    const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
+    TRDP_PD_CONFIG_T pdDefault{};
+    pdDefault.port = pdDefaultPort;
+    pdDefault.sendParam.ttl = 64U;
+
+    TRDP_MD_CONFIG_T mdDefault{};
+    mdDefault.udpPort = resolveDefaultPort(TelegramType::MD);
+    mdDefault.sendParam.ttl = 64U;
+
+    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, &pdDefault, nullptr, nullptr);
     if (pdErr != TRDP_NO_ERR) {
         std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
         tlc_terminate();
@@ -256,7 +344,7 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
     pdSessionInitialised = true;
 
-    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, 0U, 0U, nullptr, nullptr, nullptr, nullptr);
+    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, 0U, 0U, nullptr, nullptr, &mdDefault, nullptr);
     if (mdErr != TRDP_NO_ERR) {
         std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
         tlc_closeSession(pdSession);
@@ -386,7 +474,13 @@ std::optional<TrdpEngine::StackSelectContext> TrdpEngine::prepareSelectContext(T
 #endif
 
 void TrdpEngine::logConfigError(const std::string &context, TRDP_ERR_T err) const {
-    std::cerr << "[TRDP] " << context << " failed: " << err;
+    std::cerr << "[TRDP] " << context << " failed: " <<
+#ifdef TRDP_STACK_PRESENT
+        describeTrdpError(err)
+#else
+        err
+#endif
+        ;
     if (!config.hostsFile.empty()) {
         std::cerr << " (hosts file: " << config.hostsFile << ")";
     }
@@ -663,13 +757,25 @@ void TrdpEngine::buildEndpoints() {
 #endif
             if (handle.mdHandleReady) {
                 std::cout << "[TRDP] Binding MD endpoint for ComId " << telegram.comId << std::endl;
-            } else {
+            } else if (!mdSessionInitialised) {
                 std::cerr << "[TRDP] MD session not initialised; unable to bind ComId " << telegram.comId
                           << std::endl;
+            } else {
+                std::cerr << "[TRDP] Failed to bind MD endpoint for ComId " << telegram.comId
+                          << "; see previous errors" << std::endl;
             }
         } else {
             handle.pdHandleReady = pdSessionInitialised;
 #ifdef TRDP_STACK_PRESENT
+            if (handle.pdHandleReady && stackAvailable) {
+                if (telegram.direction == Direction::Tx && !ipAssignedToLocalInterface(telegram.srcIp)) {
+                    std::cerr << "[TRDP] Source IP " << formatIp(telegram.srcIp) << " for ComId " << telegram.comId
+                              << " is not configured on this host; TRDP will reject the publish request. "
+                              << "Update the XML or set TRDP_TX_IFACE/TRDP_RX_IFACE to match a local IPv4 address."
+                              << std::endl;
+                    handle.pdHandleReady = false;
+                }
+            }
             if (handle.pdHandleReady && stackAvailable) {
                 TRDP_SEND_PARAM_T sendParam{};
                 sendParam.ttl = telegram.ttl;
@@ -693,16 +799,19 @@ void TrdpEngine::buildEndpoints() {
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
-                    std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": " << pdErr
-                              << std::endl;
+                    std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": "
+                              << describeTrdpError(pdErr) << std::endl;
                 }
             }
 #endif
             if (handle.pdHandleReady) {
                 std::cout << "[TRDP] Binding PD endpoint for ComId " << telegram.comId << std::endl;
-            } else {
+            } else if (!pdSessionInitialised) {
                 std::cerr << "[TRDP] PD session not initialised; unable to bind ComId " << telegram.comId
                           << std::endl;
+            } else {
+                std::cerr << "[TRDP] Failed to bind PD endpoint for ComId " << telegram.comId
+                          << "; see previous errors" << std::endl;
             }
         }
         endpoints.emplace(telegram.comId, std::move(handle));

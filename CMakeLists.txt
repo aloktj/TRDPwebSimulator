@@ -135,7 +135,8 @@ target_include_directories(trdp_telegram_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(trdp_telegram_model PUBLIC tinyxml2::tinyxml2)
 
 add_library(trdp_engine STATIC src/trdp_engine.cpp)
-target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp)
+target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp
+    /usr/include/trdp/vos/api)
 target_link_libraries(trdp_engine PUBLIC trdp_telegram_model trdp_link Threads::Threads)
 if(TRDP_FOUND AND TAU_FOUND)
     target_compile_definitions(trdp_engine PRIVATE TRDP_STACK_PRESENT)
