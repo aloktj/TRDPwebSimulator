@@ -380,10 +380,12 @@ bool TrdpEngine::initialiseTrdpStack() {
     const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
     TRDP_PD_CONFIG_T pdDefault{};
     pdDefault.port = pdDefaultPort;
+    pdDefault.sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
     pdDefault.sendParam.ttl = 64U;
 
     TRDP_MD_CONFIG_T mdDefault{};
     mdDefault.udpPort = resolveDefaultPort(TelegramType::MD);
+    mdDefault.sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
     mdDefault.sendParam.ttl = 64U;
 
     const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, sessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
@@ -827,9 +829,9 @@ void TrdpEngine::buildEndpoints() {
                 }
             }
             if (handle.pdHandleReady && stackAvailable) {
-                TRDP_SEND_PARAM_T sendParam{};
+                TRDP_SEND_PARAM_T sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
                 sendParam.ttl = telegram.ttl;
-                TRDP_COM_PARAM_T recvParams{};
+                TRDP_COM_PARAM_T recvParams = TRDP_PD_DEFAULT_SEND_PARAM;
                 recvParams.ttl = telegram.ttl;
                 const auto buffer = runtime->getBufferCopy();
                 TRDP_ERR_T pdErr{};
