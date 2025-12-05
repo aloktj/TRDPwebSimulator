@@ -46,6 +46,40 @@ std::size_t fieldTypeSize(FieldType type) {
     return 0U;
 }
 
+std::size_t fieldWidthBytes(const FieldDef &field) {
+    const auto typeSize = fieldTypeSize(field.type);
+    const auto baseSize = typeSize == 0 ? std::max<std::size_t>(1, field.size) : typeSize;
+    return baseSize * std::max<std::size_t>(1, field.arrayLength);
+}
+
+FieldValue defaultValueForFieldImpl(const FieldDef &field) {
+    switch (field.type) {
+    case FieldType::BOOL:
+        return FieldValue{false};
+    case FieldType::INT8:
+        return FieldValue{static_cast<std::int8_t>(0)};
+    case FieldType::UINT8:
+        return FieldValue{static_cast<std::uint8_t>(0)};
+    case FieldType::INT16:
+        return FieldValue{static_cast<std::int16_t>(0)};
+    case FieldType::UINT16:
+        return FieldValue{static_cast<std::uint16_t>(0)};
+    case FieldType::INT32:
+        return FieldValue{static_cast<std::int32_t>(0)};
+    case FieldType::UINT32:
+        return FieldValue{static_cast<std::uint32_t>(0)};
+    case FieldType::FLOAT:
+        return FieldValue{0.0F};
+    case FieldType::DOUBLE:
+        return FieldValue{0.0};
+    case FieldType::STRING:
+        return FieldValue{std::string(fieldWidthBytes(field), '\0')};
+    case FieldType::BYTES:
+        return FieldValue{std::vector<std::uint8_t>(fieldWidthBytes(field), 0U)};
+    }
+    return {};
+}
+
 FieldType parseFieldType(const std::string &rawType) {
     const auto type = toUpper(rawType);
     if (type == "BOOL" || type == "BIT" || type == "BITSET" || type == "BITSET8" || type == "BITSET16") {
@@ -187,6 +221,8 @@ void collectElements(const tinyxml2::XMLElement &root, const std::vector<std::st
 }
 } // namespace
 
+FieldValue defaultValueForField(const FieldDef &field) { return defaultValueForFieldImpl(field); }
+
 const FieldDef *DatasetDef::findField(const std::string &fieldName) const {
     const auto it = std::find_if(fields.begin(), fields.end(), [&fieldName](const FieldDef &field) {
         return field.name == fieldName;
@@ -215,7 +251,7 @@ std::size_t DatasetDef::computeSize() const {
 TelegramRuntime::TelegramRuntime(const DatasetDef &dataset)
     : datasetDef(dataset), buffer(calculateInitialBufferSize()) {
     for (const auto &field : datasetDef.fields) {
-        fieldValues.emplace(field.name, FieldValue{});
+        fieldValues.emplace(field.name, defaultValueForField(field));
     }
 }
 

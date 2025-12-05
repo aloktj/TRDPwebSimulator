@@ -264,7 +264,11 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         return false;
     }
 
-    const auto mergedFields = mergeRuntimeFields(*endpoint->runtime, txFields);
+    for (const auto &[name, value] : txFields) {
+        endpoint->runtime->setFieldValue(name, value);
+    }
+
+    const auto mergedFields = endpoint->runtime->snapshotFields();
     const auto buffer = encodeFields(endpoint->runtime->dataset(), mergedFields);
     endpoint->runtime->overwriteBuffer(buffer);
 

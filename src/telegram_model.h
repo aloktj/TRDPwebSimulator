@@ -71,6 +71,8 @@ struct TelegramDef {
     std::string datasetName;
 };
 
+FieldValue defaultValueForField(const FieldDef &field);
+
 class TelegramRuntime {
   public:
     explicit TelegramRuntime(const DatasetDef &dataset);
