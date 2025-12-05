@@ -218,6 +218,32 @@ bool ipAssignedToLocalInterface(std::uint32_t ip) {
     return found;
 }
 
+std::optional<std::uint32_t> resolveInterfaceIp(const std::string &ifName) {
+    if (ifName.empty()) {
+        return std::nullopt;
+    }
+
+    ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || ifaddr == nullptr) {
+        return std::nullopt;
+    }
+
+    std::optional<std::uint32_t> ip;
+    for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_name == nullptr || ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        if (ifName == ifa->ifa_name) {
+            const auto *addr = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
+            ip = static_cast<std::uint32_t>(ntohl(addr->sin_addr.s_addr));
+            break;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return ip;
+}
+
 std::string describeTrdpError(TRDP_ERR_T err) {
     switch (err) {
     case TRDP_NO_ERR:
@@ -327,6 +353,30 @@ bool TrdpEngine::initialiseTrdpStack() {
         return false;
     }
 
+    std::uint32_t sessionIp = 0U;
+    const auto txIp = resolveInterfaceIp(config.txInterface);
+    const auto rxIp = resolveInterfaceIp(config.rxInterface);
+    if (config.txInterface.empty() && config.rxInterface.empty()) {
+        sessionIp = 0U;
+    } else if (txIp) {
+        sessionIp = *txIp;
+    } else if (rxIp) {
+        sessionIp = *rxIp;
+    }
+
+    if (!config.txInterface.empty() && !txIp) {
+        std::cerr << "[TRDP] Unable to resolve TX interface '" << config.txInterface
+                  << "'; falling back to default stack selection" << std::endl;
+    }
+    if (!config.rxInterface.empty() && !rxIp) {
+        std::cerr << "[TRDP] Unable to resolve RX interface '" << config.rxInterface
+                  << "'; falling back to default stack selection" << std::endl;
+    }
+
+    if (sessionIp != 0U) {
+        std::cout << "[TRDP] Binding TRDP sessions to interface IP " << formatIp(sessionIp) << std::endl;
+    }
+
     const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
     TRDP_PD_CONFIG_T pdDefault{};
     pdDefault.port = pdDefaultPort;
@@ -336,7 +386,7 @@ bool TrdpEngine::initialiseTrdpStack() {
     mdDefault.udpPort = resolveDefaultPort(TelegramType::MD);
     mdDefault.sendParam.ttl = 64U;
 
-    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, &pdDefault, nullptr, nullptr);
+    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, sessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
     if (pdErr != TRDP_NO_ERR) {
         std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
         tlc_terminate();
@@ -344,7 +394,7 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
     pdSessionInitialised = true;
 
-    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, 0U, 0U, nullptr, nullptr, &mdDefault, nullptr);
+    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, sessionIp, 0U, nullptr, nullptr, &mdDefault, nullptr);
     if (mdErr != TRDP_NO_ERR) {
         std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
         tlc_closeSession(pdSession);
@@ -1171,4 +1221,3 @@ void TrdpEngine::processingLoop() {
 }
 
 } // namespace trdp
-
