@@ -329,7 +329,7 @@ bool TrdpEngine::initialiseTrdpStack() {
 
     const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
     TRDP_PD_CONFIG_T pdDefault{};
-    pdDefault.udpPort = pdDefaultPort;
+    pdDefault.port = pdDefaultPort;
     pdDefault.sendParam.ttl = 64U;
 
     TRDP_MD_CONFIG_T mdDefault{};
