@@ -28,8 +28,16 @@ class TrdpEngine {
   public:
     static TrdpEngine &instance();
 
+    struct TrdpConfig {
+        std::string rxInterface;
+        std::string txInterface;
+        std::string hostsFile;
+        bool enableDnr{false};
+        bool enableEcsp{false};
+    };
+
     // Start TRDP stack and background worker. Idempotent.
-    bool start();
+    bool start(const TrdpConfig &config = {});
 
     // Stop worker thread and tear down handles. Safe to call multiple times.
     void stop();
@@ -68,6 +76,8 @@ class TrdpEngine {
     std::atomic<bool> stopRequested{false};
     bool pdSessionInitialised{false};
     bool mdSessionInitialised{false};
+    bool stackAvailable{false};
+    TrdpConfig config;
     std::thread worker;
     std::mutex stateMtx;
     std::condition_variable cv;
