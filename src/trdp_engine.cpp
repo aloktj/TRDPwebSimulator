@@ -12,28 +12,26 @@
 #include <utility>
 
 #ifdef TRDP_STACK_PRESENT
-#if __has_include(<trdp/api/tau_dnr.h>)
 #include <trdp/api/tau_dnr.h>
-#define TRDP_HAS_TAU_DNR 1
-#endif
 #if __has_include(<trdp/api/tau_ecsp.h>)
 #include <trdp/api/tau_ecsp.h>
 #define TRDP_HAS_TAU_ECSP 1
 #endif
 #include <trdp/api/tau_ctrl.h>
 #include <trdp/api/trdp_if_light.h>
+#define TRDP_HAS_TAU_DNR 0
 #endif
 
 namespace trdp {
-namespace {
 
 #ifdef TRDP_STACK_PRESENT
-void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_PD_INFO_T *pInfo, const UINT8 *pData,
+void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_PD_INFO_T *pInfo, UINT8 *pData,
                        UINT32 dataSize);
-void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_MD_INFO_T *pInfo, const UINT8 *pData,
+void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_MD_INFO_T *pInfo, UINT8 *pData,
                        UINT32 dataSize);
 #endif
 
+namespace {
 template <typename T> T readLe(const std::uint8_t *data) {
     T value{};
     std::memcpy(&value, data, sizeof(T));
@@ -198,7 +196,7 @@ std::map<std::string, FieldValue> mergeRuntimeFields(const TelegramRuntime &runt
     return result;
 }
 
-#ifdef TRDP_HAS_TAU_DNR
+#if TRDP_HAS_TAU_DNR
 static TRDP_DNR_OPTS_T mapDnrMode(TrdpEngine::DnrMode mode) {
     return (mode == TrdpEngine::DnrMode::DedicatedThread) ? TRDP_DNR_OWN_THREAD : TRDP_DNR_COMMON_THREAD;
 }
@@ -292,11 +290,11 @@ void TrdpEngine::teardownTrdpStack() {
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
         if (mdSessionInitialised) {
-            tlc_configSession(mdSession, nullptr, nullptr, nullptr);
+            tlc_configSession(mdSession, nullptr, nullptr, nullptr, nullptr);
             (void)tlc_closeSession(mdSession);
         }
         if (pdSessionInitialised) {
-            tlc_configSession(pdSession, nullptr, nullptr, nullptr);
+            tlc_configSession(pdSession, nullptr, nullptr, nullptr, nullptr);
             (void)tlc_closeSession(pdSession);
         }
         if (dnrInitialised) {
@@ -423,7 +421,7 @@ bool TrdpEngine::initialiseDnr() {
 #ifdef TRDP_STACK_PRESENT
     const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
 
-#ifdef TRDP_HAS_TAU_DNR
+#if TRDP_HAS_TAU_DNR
     const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
     const TRDP_DNR_OPTS_T dnrMode = mapDnrMode(config.dnrMode);
     const TRDP_ERR_T dnrErr = tau_initDnr(session, 0U, 0U, hostsFile, dnrMode, TRUE);
@@ -592,7 +590,7 @@ void TrdpEngine::buildEndpoints() {
                 } else {
                     pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
                                            telegram.comId, etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, anyAddr,
-                                           0U, &recvParams, 0U, 0U);
+                                           TRDP_FLAGS_DEFAULT, &recvParams, 0U, static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
@@ -610,6 +608,10 @@ void TrdpEngine::buildEndpoints() {
         }
         endpoints.emplace(telegram.comId, std::move(handle));
     }
+}
+
+bool TrdpEngine::start() {
+    return start(TrdpConfig{});
 }
 
 bool TrdpEngine::start(const TrdpConfig &cfg) {
@@ -781,7 +783,7 @@ std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool us
         }
     }
 
-#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+#if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
@@ -811,7 +813,7 @@ std::optional<std::string> TrdpEngine::ipToUri(std::uint32_t ipAddr, bool useCac
         }
     }
 
-#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+#if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
@@ -843,7 +845,7 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
         }
     }
 
-#if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+#if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
@@ -851,9 +853,9 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
     UINT8 tcnVeh{};
     UINT8 tcnCst{};
     UINT8 opCst{};
-    TRDP_ERR_T err = tau_label2TcnVehNo(session, &tcnVeh, &tcnCst, label.c_str(), nullptr);
+    TRDP_ERR_T err = ::tau_label2TcnVehNo(session, &tcnVeh, &tcnCst, label.c_str(), nullptr);
     if (err == TRDP_NO_ERR) {
-        err = tau_label2OpCstNo(session, &opCst, label.c_str());
+        err = ::tau_label2OpCstNo(session, &opCst, label.c_str());
     }
     if (err != TRDP_NO_ERR) {
         logConfigError("tau_label2Ids", err);
@@ -873,7 +875,7 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
 }
 
 #ifdef TRDP_STACK_PRESENT
-void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_PD_INFO_T *pInfo, const UINT8 *pData,
+void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_PD_INFO_T *pInfo, UINT8 *pData,
                        UINT32 dataSize) {
     if (refCon == nullptr || pInfo == nullptr || pData == nullptr) {
         return;
@@ -887,7 +889,7 @@ void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_
     engine->handleRxTelegram(pInfo->comId, payload);
 }
 
-void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_MD_INFO_T *pInfo, const UINT8 *pData,
+void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_MD_INFO_T *pInfo, UINT8 *pData,
                        UINT32 dataSize) {
     if (refCon == nullptr || pInfo == nullptr) {
         return;

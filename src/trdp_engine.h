@@ -18,6 +18,8 @@
 
 #ifdef TRDP_STACK_PRESENT
 #include <trdp/api/trdp_if_light.h>
+#else
+using TRDP_ERR_T = int;
 #endif
 
 namespace trdp {
@@ -63,7 +65,8 @@ class TrdpEngine {
     };
 
     // Start TRDP stack and background worker. Idempotent.
-    bool start(const TrdpConfig &config = {});
+    bool start();
+    bool start(const TrdpConfig &config);
 
     // Stop worker thread and tear down handles. Safe to call multiple times.
     void stop();
