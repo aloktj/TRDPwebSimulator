@@ -12,15 +12,15 @@
 #include <utility>
 
 #ifdef TRDP_STACK_PRESENT
-#if __has_include(<tau_dnr.h>)
-#include <tau_dnr.h>
+#if __has_include(<trdp/api/tau_dnr.h>)
+#include <trdp/api/tau_dnr.h>
 #define TRDP_HAS_TAU_DNR 1
 #endif
-#if __has_include(<tau_ecsp.h>)
-#include <tau_ecsp.h>
+#if __has_include(<trdp/api/tau_ecsp.h>)
+#include <trdp/api/tau_ecsp.h>
 #define TRDP_HAS_TAU_ECSP 1
 #endif
-#include <tau_ctrl.h>
+#include <trdp/api/tau_ctrl.h>
 #include <trdp/api/trdp_if_light.h>
 #endif
 
@@ -199,46 +199,8 @@ std::map<std::string, FieldValue> mergeRuntimeFields(const TelegramRuntime &runt
 }
 
 #ifdef TRDP_HAS_TAU_DNR
-template <typename T, typename = void> struct hasHostsFile : std::false_type {};
-template <typename T> struct hasHostsFile<T, std::void_t<decltype(std::declval<T>().pHostsFile)>> : std::true_type {};
-template <typename T, typename = void> struct hasThreadModel : std::false_type {};
-template <typename T> struct hasThreadModel<T, std::void_t<decltype(std::declval<T>().threadModel)>> : std::true_type {};
-template <typename T, typename = void> struct hasCacheEntries : std::false_type {};
-template <typename T> struct hasCacheEntries<T, std::void_t<decltype(std::declval<T>().maxNoCacheEntries)>>
-    : std::true_type {};
-template <typename T, typename = void> struct hasCacheTimeout : std::false_type {};
-template <typename T> struct hasCacheTimeout<T, std::void_t<decltype(std::declval<T>().cacheTimeout)>> : std::true_type {};
-template <typename T, typename = void> struct hasEnableCache : std::false_type {};
-template <typename T> struct hasEnableCache<T, std::void_t<decltype(std::declval<T>().enableCache)>> : std::true_type {};
-
-template <typename Config> void setDnrHostsFile(Config &cfg, const char *hostsFile) {
-    if constexpr (hasHostsFile<Config>::value) {
-        cfg.pHostsFile = hostsFile;
-    }
-}
-
-template <typename Config> void setDnrThreadModel(Config &cfg, TrdpEngine::DnrMode mode) {
-    if constexpr (hasThreadModel<Config>::value) {
-        cfg.threadModel = (mode == TrdpEngine::DnrMode::DedicatedThread) ? TAU_DNR_THREAD_DEDICATED : TAU_DNR_THREAD_COMMON;
-    }
-}
-
-template <typename Config> void setDnrCacheEntries(Config &cfg, std::size_t entries) {
-    if constexpr (hasCacheEntries<Config>::value) {
-        cfg.maxNoCacheEntries = static_cast<UINT32>(entries);
-    }
-}
-
-template <typename Config> void setDnrCacheTimeout(Config &cfg, std::chrono::milliseconds timeout) {
-    if constexpr (hasCacheTimeout<Config>::value) {
-        cfg.cacheTimeout = static_cast<UINT32>(timeout.count());
-    }
-}
-
-template <typename Config> void setDnrCacheEnabled(Config &cfg, bool enable) {
-    if constexpr (hasEnableCache<Config>::value) {
-        cfg.enableCache = enable ? TRUE : FALSE;
-    }
+static TRDP_DNR_OPTS_T mapDnrMode(TrdpEngine::DnrMode mode) {
+    return (mode == TrdpEngine::DnrMode::DedicatedThread) ? TRDP_DNR_OWN_THREAD : TRDP_DNR_COMMON_THREAD;
 }
 #endif
 
@@ -280,15 +242,26 @@ bool TrdpEngine::initialiseTrdpStack() {
         return false;
     }
 
-    const TRDP_ERR_T tauErr = tau_init();
-    if (tauErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tau_init failed: " << tauErr << std::endl;
-    } else {
-        tauInitialised = true;
+    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, nullptr, nullptr, nullptr);
+    if (pdErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
+        tlc_terminate();
+        return false;
     }
+    pdSessionInitialised = true;
+
+    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, 0U, 0U, nullptr, nullptr, nullptr, nullptr);
+    if (mdErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
+        tlc_closeSession(pdSession);
+        pdSessionInitialised = false;
+        tlc_terminate();
+        return false;
+    }
+    mdSessionInitialised = true;
 
     if (config.enableDnr && !initialiseDnr()) {
-        tlc_terminate();
+        teardownTrdpStack();
         return false;
     }
 
@@ -296,37 +269,11 @@ bool TrdpEngine::initialiseTrdpStack() {
         initialiseEcsp();
     }
 
-    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, nullptr, nullptr, nullptr, nullptr);
-    if (pdErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
-        tlc_terminate();
-        if (tauInitialised) {
-            tau_terminate();
-            tauInitialised = false;
-        }
-        return false;
-    }
-    pdSessionInitialised = true;
-
-    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, nullptr, nullptr, nullptr, nullptr);
-    if (mdErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
-        tlc_closeSession(pdSession);
-        pdSessionInitialised = false;
-        tlc_terminate();
-        if (tauInitialised) {
-            tau_terminate();
-            tauInitialised = false;
-        }
-        return false;
-    }
-    mdSessionInitialised = true;
-
     // Apply any updated session defaults or interface selections.
-    (void)tlc_configSession(pdSession, nullptr, nullptr, nullptr);
-    (void)tlc_configSession(mdSession, nullptr, nullptr, nullptr);
-    (void)tlc_updateSession(pdSession, &pdSession, 0U);
-    (void)tlc_updateSession(mdSession, &mdSession, 0U);
+    (void)tlc_configSession(pdSession, nullptr, nullptr, nullptr, nullptr);
+    (void)tlc_configSession(mdSession, nullptr, nullptr, nullptr, nullptr);
+    (void)tlc_updateSession(pdSession);
+    (void)tlc_updateSession(mdSession);
 #else
     pdSessionInitialised = true;
     mdSessionInitialised = true;
@@ -352,11 +299,10 @@ void TrdpEngine::teardownTrdpStack() {
             tlc_configSession(pdSession, nullptr, nullptr, nullptr);
             (void)tlc_closeSession(pdSession);
         }
-        tlc_terminate();
-        if (tauInitialised) {
-            tau_terminate();
-            tauInitialised = false;
+        if (dnrInitialised) {
+            tau_deInitDnr(pdSessionInitialised ? pdSession : mdSession);
         }
+        tlc_terminate();
         dnrInitialised = false;
         ecspInitialised = false;
 #else
@@ -380,9 +326,9 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
                 return std::nullopt;
             }
 
-            TRDP_ERR_T err = tlc_getInterval(session, &interval, nullptr);
+            TRDP_ERR_T err = tlc_getInterval(session, &interval, nullptr, nullptr);
             if (err != TRDP_NO_ERR) {
-                err = tlp_getInterval(session, &interval);
+                err = tlp_getInterval(session, &interval, nullptr, nullptr);
             }
 
             if (err == TRDP_NO_ERR) {
@@ -478,15 +424,11 @@ bool TrdpEngine::initialiseDnr() {
     const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
 
 #ifdef TRDP_HAS_TAU_DNR
-    TRDP_DNR_CONFIG_T dnrConfig{};
-    setDnrHostsFile(dnrConfig, hostsFile);
-    setDnrThreadModel(dnrConfig, config.dnrMode);
-    setDnrCacheEntries(dnrConfig, config.cacheConfig.uriCacheEntries);
-    setDnrCacheTimeout(dnrConfig, config.cacheConfig.uriCacheTtl);
-    setDnrCacheEnabled(dnrConfig, config.cacheConfig.enableUriCache);
-    const TRDP_ERR_T dnrErr = tau_initDnr(&dnrConfig);
+    const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    const TRDP_DNR_OPTS_T dnrMode = mapDnrMode(config.dnrMode);
+    const TRDP_ERR_T dnrErr = tau_initDnr(session, 0U, 0U, hostsFile, dnrMode, TRUE);
 #else
-    const TRDP_ERR_T dnrErr = tau_initDnr(nullptr);
+    const TRDP_ERR_T dnrErr = TRDP_NO_ERR;
 #endif
     if (dnrErr != TRDP_NO_ERR) {
         logConfigError("tau_initDnr", dnrErr);
@@ -580,15 +522,14 @@ bool TrdpEngine::processStackOnce() {
             topologyCountersDirty = false;
         }
 
-        TRDP_TIME_T rcvTime{};
         if (pdSessionInitialised) {
-            const TRDP_ERR_T pdErr = tlc_process(pdSession, &rcvTime, nullptr);
+            const TRDP_ERR_T pdErr = tlc_process(pdSession, nullptr, nullptr);
             if (pdErr != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlc_process (PD) failed: " << pdErr << std::endl;
             }
         }
         if (mdSessionInitialised) {
-            const TRDP_ERR_T mdErr = tlc_process(mdSession, &rcvTime, nullptr);
+            const TRDP_ERR_T mdErr = tlc_process(mdSession, nullptr, nullptr);
             if (mdErr != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
             }
@@ -617,12 +558,11 @@ void TrdpEngine::buildEndpoints() {
             handle.mdHandleReady = mdSessionInitialised;
 #ifdef TRDP_STACK_PRESENT
             if (handle.mdHandleReady && stackAvailable) {
-                TRDP_SEND_PARAM_T sendParam{};
-                TRDP_UUID_T uuid{};
                 TRDP_IP_ADDR_T anyAddr = 0U;
-                TRDP_ERR_T mdErr = tlm_addListener(mdSession, &handle.mdListenerHandle, &uuid, &uuid, anyAddr,
-                                                   telegram.comId, etbTopoCounter, opTrainTopoCounter, anyAddr,
-                                                   mdReceiveCallback, this, 0U, anyAddr, &sendParam);
+                TRDP_URI_USER_T emptyUri{};
+                TRDP_ERR_T mdErr =
+                    tlm_addListener(mdSession, &handle.mdListenerHandle, this, mdReceiveCallback, TRUE, telegram.comId,
+                                    etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, anyAddr, 0U, emptyUri, emptyUri);
                 handle.mdHandleReady = (mdErr == TRDP_NO_ERR);
                 if (mdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] tlm_addListener failed for ComId " << telegram.comId << ": " << mdErr
@@ -641,18 +581,18 @@ void TrdpEngine::buildEndpoints() {
 #ifdef TRDP_STACK_PRESENT
             if (handle.pdHandleReady && stackAvailable) {
                 TRDP_SEND_PARAM_T sendParam{};
-                TRDP_UUID_T uuid{};
                 TRDP_IP_ADDR_T anyAddr = 0U;
+                TRDP_COM_PARAM_T recvParams{};
                 const auto buffer = runtime->getBufferCopy();
                 TRDP_ERR_T pdErr{};
                 if (telegram.direction == Direction::Tx) {
-                    pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, &uuid, &uuid, anyAddr, anyAddr,
-                                        telegram.comId, etbTopoCounter, opTrainTopoCounter, 0U, 0U,
-                                        static_cast<UINT32>(buffer.size()), buffer.data(), FALSE, FALSE, &sendParam);
+                    pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, this, nullptr, 0U, telegram.comId,
+                                        etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, 0U, 0U, 0U, &sendParam,
+                                        buffer.data(), static_cast<UINT32>(buffer.size()));
                 } else {
-                    pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, &uuid, anyAddr, telegram.comId,
-                                           anyAddr, etbTopoCounter, opTrainTopoCounter, 0U, pdReceiveCallback, this,
-                                           0U, anyAddr, &sendParam);
+                    pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
+                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, anyAddr,
+                                           0U, &recvParams, 0U, 0U);
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
@@ -775,11 +715,10 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
 #ifdef TRDP_STACK_PRESENT
         if (stackAvailable) {
             TRDP_SEND_PARAM_T sendParam{};
-            TRDP_UUID_T uuid{};
             TRDP_IP_ADDR_T anyAddr = 0U;
-            TRDP_ERR_T err = tlm_request(mdSession, &endpoint->mdRequestHandle, &uuid, &uuid, anyAddr, anyAddr,
-                                         comId, etbTopoCounter, opTrainTopoCounter, 0U, 0U, buffer.data(),
-                                         static_cast<UINT32>(buffer.size()), mdReceiveCallback, this, &sendParam);
+            TRDP_ERR_T err = tlm_request(mdSession, this, mdReceiveCallback, &endpoint->mdSessionId, comId,
+                                         etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, 0U, 0U, 0U, &sendParam,
+                                         buffer.data(), static_cast<UINT32>(buffer.size()), nullptr, nullptr);
             if (err != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlm_request failed for ComId " << comId << ": " << err << std::endl;
                 return false;
@@ -843,8 +782,12 @@ std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool us
     }
 
 #if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+    if (!pdSessionInitialised && !mdSessionInitialised) {
+        return std::nullopt;
+    }
     TRDP_IP_ADDR_T addr{};
-    const TRDP_ERR_T err = tau_uri2Addr(uri.c_str(), &addr, useCache ? TRUE : FALSE);
+    const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    const TRDP_ERR_T err = tau_uri2Addr(session, &addr, uri.c_str());
     if (err != TRDP_NO_ERR) {
         logConfigError("tau_uri2Addr", err);
         return std::nullopt;
@@ -869,9 +812,12 @@ std::optional<std::string> TrdpEngine::ipToUri(std::uint32_t ipAddr, bool useCac
     }
 
 #if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
+    if (!pdSessionInitialised && !mdSessionInitialised) {
+        return std::nullopt;
+    }
     std::array<char, 256> uriBuffer{};
-    const TRDP_ERR_T err = tau_addr2Uri(static_cast<TRDP_IP_ADDR_T>(ipAddr), uriBuffer.data(), uriBuffer.size(),
-                                        useCache ? TRUE : FALSE);
+    const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    const TRDP_ERR_T err = tau_addr2Uri(session, uriBuffer.data(), static_cast<TRDP_IP_ADDR_T>(ipAddr));
     if (err != TRDP_NO_ERR) {
         logConfigError("tau_addr2Uri", err);
         return std::nullopt;
@@ -898,14 +844,23 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
     }
 
 #if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_DNR)
-    TRDP_LABELS_T ids{};
-    const TRDP_ERR_T err = tau_label2Ids(label.c_str(), &ids, nullptr, nullptr);
+    if (!pdSessionInitialised && !mdSessionInitialised) {
+        return std::nullopt;
+    }
+    TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    UINT8 tcnVeh{};
+    UINT8 tcnCst{};
+    UINT8 opCst{};
+    TRDP_ERR_T err = tau_label2TcnVehNo(session, &tcnVeh, &tcnCst, label.c_str(), nullptr);
+    if (err == TRDP_NO_ERR) {
+        err = tau_label2OpCstNo(session, &opCst, label.c_str());
+    }
     if (err != TRDP_NO_ERR) {
         logConfigError("tau_label2Ids", err);
         return std::nullopt;
     }
-    auto resolved = std::make_tuple(static_cast<std::uint32_t>(ids.cst), static_cast<std::uint32_t>(ids.veh),
-                                    static_cast<std::uint32_t>(ids.func));
+    auto resolved = std::make_tuple(static_cast<std::uint32_t>(tcnCst), static_cast<std::uint32_t>(tcnVeh),
+                                    static_cast<std::uint32_t>(opCst));
     if (config.cacheConfig.enableUriCache && useCache) {
         setCacheEntry(labelCache[label], resolved);
     }
@@ -923,8 +878,8 @@ void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_
     if (refCon == nullptr || pInfo == nullptr || pData == nullptr) {
         return;
     }
-    if (pInfo->result != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] PD receive error for ComId " << pInfo->comId << ": " << pInfo->result << std::endl;
+    if (pInfo->resultCode != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] PD receive error for ComId " << pInfo->comId << ": " << pInfo->resultCode << std::endl;
         return;
     }
     auto *engine = static_cast<TrdpEngine *>(refCon);
@@ -938,8 +893,8 @@ void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_
         return;
     }
     auto *engine = static_cast<TrdpEngine *>(refCon);
-    if (pInfo->result != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] MD receive error for ComId " << pInfo->comId << ": " << pInfo->result << std::endl;
+    if (pInfo->resultCode != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] MD receive error for ComId " << pInfo->comId << ": " << pInfo->resultCode << std::endl;
         return;
     }
     const std::uint8_t *payloadPtr = pData;
