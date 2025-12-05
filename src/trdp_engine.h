@@ -99,7 +99,7 @@ class TrdpEngine {
         TRDP_PUB_T pdPublishHandle{};
         TRDP_SUB_T pdSubscribeHandle{};
         TRDP_LIS_T mdListenerHandle{};
-        TRDP_REQUEST_T mdRequestHandle{};
+        TRDP_UUID_T mdSessionId{};
 #endif
     };
 
@@ -125,7 +125,6 @@ class TrdpEngine {
 #ifdef TRDP_STACK_PRESENT
     TRDP_APP_SESSION_T pdSession{};
     TRDP_APP_SESSION_T mdSession{};
-    bool tauInitialised{false};
     std::vector<UINT8> heapStorage;
     bool dnrInitialised{false};
     bool ecspInitialised{false};
