@@ -196,7 +196,14 @@ void TelegramController::updateFields(const drogon::HttpRequestPtr &req,
         if (fieldDef == nullptr) {
             continue;
         }
-        const auto parsed = jsonToFieldValue(*fieldDef, (*json)[memberName]);
+
+        const auto &value = (*json)[memberName];
+        if (value.isNull()) {
+            runtime->setFieldValue(memberName, defaultValueForField(*fieldDef));
+            continue;
+        }
+
+        const auto parsed = jsonToFieldValue(*fieldDef, value);
         if (!parsed.has_value()) {
             continue;
         }
@@ -237,7 +244,14 @@ void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
             if (fieldDef == nullptr) {
                 continue;
             }
-            const auto parsed = jsonToFieldValue(*fieldDef, (*json)[memberName]);
+
+            const auto &value = (*json)[memberName];
+            if (value.isNull()) {
+                overrides.emplace(memberName, defaultValueForField(*fieldDef));
+                continue;
+            }
+
+            const auto parsed = jsonToFieldValue(*fieldDef, value);
             if (parsed.has_value()) {
                 overrides.emplace(memberName, parsed.value());
             }
