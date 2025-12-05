@@ -193,7 +193,24 @@ bool TrdpEngine::initialiseTrdpStack() {
     // Placeholder for tlc_init()/tau_init() depending on the TRDP stack presence.
     // Keep the logging explicit so failures are visible in headless runs.
     std::cout << "[TRDP] Initialising stack..." << std::endl;
-    // Future: add actual TRDP init calls and error checks here.
+    if (stackAvailable) {
+        std::cout << "[TRDP] Requested RX iface: " << (config.rxInterface.empty() ? "<default>" : config.rxInterface)
+                  << std::endl;
+        std::cout << "[TRDP] Requested TX iface: " << (config.txInterface.empty() ? "<default>" : config.txInterface)
+                  << std::endl;
+        if (!config.hostsFile.empty()) {
+            std::cout << "[TRDP] Using hosts file: " << config.hostsFile << std::endl;
+        }
+        if (config.enableDnr) {
+            std::cout << "[TRDP] DNR initialisation enabled" << std::endl;
+        }
+        if (config.enableEcsp) {
+            std::cout << "[TRDP] ECSP control enabled" << std::endl;
+        }
+        // Future: add actual TRDP init calls and error checks here.
+    } else {
+        std::cout << "[TRDP] Stack not available at build time; running in stub mode" << std::endl;
+    }
     pdSessionInitialised = true;
     mdSessionInitialised = true;
     std::cout << "[TRDP] PD session handle ready" << std::endl;
@@ -233,11 +250,18 @@ void TrdpEngine::buildEndpoints() {
     }
 }
 
-bool TrdpEngine::start() {
+bool TrdpEngine::start(const TrdpConfig &cfg) {
     std::lock_guard lock(stateMtx);
     if (running.load()) {
         return true;
     }
+
+    config = cfg;
+#ifdef TRDP_STACK_PRESENT
+    stackAvailable = true;
+#else
+    stackAvailable = false;
+#endif
 
     if (!bootstrapRegistry()) {
         return false;

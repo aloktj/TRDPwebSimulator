@@ -76,6 +76,9 @@ target_link_libraries(trdp_telegram_model PUBLIC tinyxml2::tinyxml2)
 add_library(trdp_engine STATIC src/trdp_engine.cpp)
 target_include_directories(trdp_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/include/jsoncpp)
 target_link_libraries(trdp_engine PUBLIC trdp_telegram_model trdp_link Threads::Threads)
+if(TRDP_FOUND)
+    target_compile_definitions(trdp_engine PRIVATE TRDP_STACK_PRESENT)
+endif()
 
 add_library(trdp_web_backend OBJECT
     src/controllers/ConfigController.cpp
