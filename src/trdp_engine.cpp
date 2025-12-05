@@ -25,6 +25,9 @@
 #include <trdp/api/tau_ctrl.h>
 #include <trdp/api/trdp_if_light.h>
 #include <trdp/api/iec61375-2-3.h>
+#endif
+
+#ifndef TRDP_HAS_TAU_DNR
 #define TRDP_HAS_TAU_DNR 0
 #endif
 
@@ -38,6 +41,23 @@ void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_
 #endif
 
 namespace {
+#if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
+constexpr bool kDnrCompiledIn = true;
+#else
+constexpr bool kDnrCompiledIn = false;
+#endif
+
+void logDnrUnavailable(const std::string &reason)
+{
+    static bool warned = false;
+    static std::string lastReason;
+    if (!warned || reason != lastReason) {
+        std::cerr << "[TRDP] DNR unavailable: " << reason << std::endl;
+        warned = true;
+        lastReason = reason;
+    }
+}
+
 template <typename T> T readLe(const std::uint8_t *data) {
     T value{};
     std::memcpy(&value, data, sizeof(T));
@@ -310,7 +330,7 @@ std::map<std::string, FieldValue> mergeRuntimeFields(const TelegramRuntime &runt
     return result;
 }
 
-#if TRDP_HAS_TAU_DNR
+#if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
 static TRDP_DNR_OPTS_T mapDnrMode(TrdpEngine::DnrMode mode) {
     return (mode == TrdpEngine::DnrMode::DedicatedThread) ? TRDP_DNR_OWN_THREAD : TRDP_DNR_COMMON_THREAD;
 }
@@ -455,10 +475,12 @@ void TrdpEngine::teardownTrdpStack() {
             (void)tlc_closeSession(pdSession);
         }
         if (dnrInitialised) {
-            tau_deInitDnr(pdSessionInitialised ? pdSession : mdSession);
+            if constexpr (kDnrCompiledIn) {
+                tau_deInitDnr(pdSessionInitialised ? pdSession : mdSession);
+            }
+            dnrInitialised = false;
         }
         tlc_terminate();
-        dnrInitialised = false;
         ecspInitialised = false;
 #else
         std::cout << "[TRDP] Stack not available; stub teardown" << std::endl;
@@ -623,25 +645,28 @@ bool TrdpEngine::publishPdBuffer(EndpointHandle &endpoint, const std::vector<std
 
 bool TrdpEngine::initialiseDnr() {
 #ifdef TRDP_STACK_PRESENT
-    const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
+    if constexpr (!kDnrCompiledIn) {
+        logDnrUnavailable("TAU DNR APIs not available in detected stack; host lookups are disabled");
+        return true;
+    }
 
-#if TRDP_HAS_TAU_DNR
-    const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
-    const TRDP_DNR_OPTS_T dnrMode = mapDnrMode(config.dnrMode);
-    const TRDP_ERR_T dnrErr = tau_initDnr(session, 0U, 0U, hostsFile, dnrMode, TRUE);
-#else
-    const TRDP_ERR_T dnrErr = TRDP_NO_ERR;
-#endif
-    if (dnrErr != TRDP_NO_ERR) {
-        logConfigError("tau_initDnr", dnrErr);
-        return false;
+    if constexpr (kDnrCompiledIn) {
+        const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
+
+        const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+        const TRDP_DNR_OPTS_T dnrMode = mapDnrMode(config.dnrMode);
+        const TRDP_ERR_T dnrErr = tau_initDnr(session, 0U, 0U, hostsFile, dnrMode, TRUE);
+        if (dnrErr != TRDP_NO_ERR) {
+            logConfigError("tau_initDnr", dnrErr);
+            return false;
+        }
+        dnrInitialised = true;
+        std::cout << "[TRDP] DNR initialised";
+        if (hostsFile != nullptr) {
+            std::cout << " (hosts file: " << hostsFile << ")";
+        }
+        std::cout << std::endl;
     }
-    dnrInitialised = true;
-    std::cout << "[TRDP] DNR initialised";
-    if (hostsFile != nullptr) {
-        std::cout << " (hosts file: " << hostsFile << ")";
-    }
-    std::cout << std::endl;
 #endif
     return true;
 }
@@ -916,6 +941,14 @@ bool TrdpEngine::start(const TrdpConfig &cfg) {
     stackAvailable = false;
 #endif
 
+    if (config.enableDnr && (!stackAvailable || !kDnrCompiledIn)) {
+        if (!stackAvailable) {
+            logDnrUnavailable("TRDP stack not present in this build; TAU DNR lookups are disabled");
+        } else {
+            logDnrUnavailable("TAU DNR APIs not available in detected stack; host lookups are disabled");
+        }
+    }
+
     if (!bootstrapRegistry()) {
         return false;
     }
@@ -1052,6 +1085,10 @@ std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool us
     }
 
 #if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
+    if (!dnrInitialised) {
+        logDnrUnavailable("DNR not initialised; URI lookups are disabled");
+        return std::nullopt;
+    }
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
@@ -1067,6 +1104,11 @@ std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool us
     }
     return static_cast<std::uint32_t>(addr);
 #else
+    if (!kDnrCompiledIn) {
+        logDnrUnavailable("TAU DNR APIs not available in detected stack; URI lookups are disabled");
+    } else {
+        logDnrUnavailable("TRDP stack not present in this build; URI lookups are disabled");
+    }
     (void)useCache;
     (void)uri;
     return std::nullopt;
@@ -1082,6 +1124,10 @@ std::optional<std::string> TrdpEngine::ipToUri(std::uint32_t ipAddr, bool useCac
     }
 
 #if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
+    if (!dnrInitialised) {
+        logDnrUnavailable("DNR not initialised; URI lookups are disabled");
+        return std::nullopt;
+    }
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
@@ -1098,6 +1144,11 @@ std::optional<std::string> TrdpEngine::ipToUri(std::uint32_t ipAddr, bool useCac
     }
     return resolved;
 #else
+    if (!kDnrCompiledIn) {
+        logDnrUnavailable("TAU DNR APIs not available in detected stack; URI lookups are disabled");
+    } else {
+        logDnrUnavailable("TRDP stack not present in this build; URI lookups are disabled");
+    }
     (void)useCache;
     (void)ipAddr;
     return std::nullopt;
@@ -1114,6 +1165,10 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
     }
 
 #if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
+    if (!dnrInitialised) {
+        logDnrUnavailable("DNR not initialised; label lookups are disabled");
+        return std::nullopt;
+    }
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
@@ -1136,6 +1191,11 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
     }
     return resolved;
 #else
+    if (!kDnrCompiledIn) {
+        logDnrUnavailable("TAU DNR APIs not available in detected stack; label lookups are disabled");
+    } else {
+        logDnrUnavailable("TRDP stack not present in this build; label lookups are disabled");
+    }
     (void)useCache;
     (void)label;
     return std::nullopt;
