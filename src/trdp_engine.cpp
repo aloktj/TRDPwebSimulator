@@ -678,15 +678,18 @@ void TrdpEngine::buildEndpoints() {
                 const auto buffer = runtime->getBufferCopy();
                 TRDP_ERR_T pdErr{};
                 if (telegram.direction == Direction::Tx) {
+                    const auto intervalMs = static_cast<UINT32>(telegram.cycle.count());
+                    constexpr UINT32 redundancyId = 0U;
                     pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, this, nullptr, 0U, telegram.comId,
-                                        etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, telegram.srcPort,
-                                        telegram.destPort, 0U,
-                                        &sendParam, buffer.data(), static_cast<UINT32>(buffer.size()));
+                                        etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, intervalMs,
+                                        redundancyId, TRDP_FLAGS_DEFAULT, &sendParam, buffer.data(),
+                                        static_cast<UINT32>(buffer.size()));
                 } else {
+                    constexpr UINT32 redundancyId = 0U;
                     pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
-                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
-                                           telegram.destIp, telegram.srcPort, telegram.destPort, TRDP_FLAGS_DEFAULT,
-                                           &recvParams, 0U, static_cast<TRDP_TO_BEHAVIOR_T>(0U));
+                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp, redundancyId,
+                                           telegram.destIp, TRDP_FLAGS_DEFAULT, &recvParams, 0U,
+                                           static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
@@ -832,8 +835,10 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         sent = publishPdBuffer(*endpoint, buffer);
     }
 
-    if (sent && auto *hub = TelegramHub::instance()) {
-        hub->publishTxConfirmation(comId, mergedFields);
+    if (sent) {
+        if (auto *hub = TelegramHub::instance()) {
+            hub->publishTxConfirmation(comId, mergedFields);
+        }
     }
 
     if (sent && endpoint->def.type == TelegramType::PD && endpoint->cycle.count() > 0) {
