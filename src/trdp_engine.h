@@ -42,6 +42,9 @@ class TrdpEngine {
     // Feed a freshly received PD telegram into the registry/runtime.
     void handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
 
+    // Feed a freshly received MD telegram into the registry/runtime.
+    void handleRxMdTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
+
   private:
     TrdpEngine() = default;
     TrdpEngine(const TrdpEngine &) = delete;
@@ -50,6 +53,8 @@ class TrdpEngine {
     struct EndpointHandle {
         TelegramDef def;
         std::shared_ptr<TelegramRuntime> runtime;
+        bool pdHandleReady{false};
+        bool mdHandleReady{false};
     };
 
     bool bootstrapRegistry();
@@ -61,6 +66,8 @@ class TrdpEngine {
 
     std::atomic<bool> running{false};
     std::atomic<bool> stopRequested{false};
+    bool pdSessionInitialised{false};
+    bool mdSessionInitialised{false};
     std::thread worker;
     std::mutex stateMtx;
     std::condition_variable cv;
