@@ -98,6 +98,9 @@ class TrdpEngine {
         std::shared_ptr<TelegramRuntime> runtime;
         bool pdHandleReady{false};
         bool mdHandleReady{false};
+        std::chrono::milliseconds cycle{0};
+        bool txCyclicActive{false};
+        std::chrono::steady_clock::time_point nextSend{};
 #ifdef TRDP_STACK_PRESENT
         TRDP_PUB_T pdPublishHandle{};
         TRDP_SUB_T pdSubscribeHandle{};
@@ -121,6 +124,7 @@ class TrdpEngine {
     std::optional<StackSelectContext> prepareSelectContext(TRDP_APP_SESSION_T session) const;
 #endif
     void markTopologyChanged();
+    bool publishPdBuffer(EndpointHandle &endpoint, const std::vector<std::uint8_t> &buffer);
     bool processStackOnce(
 #ifdef TRDP_STACK_PRESENT
         const StackSelectContext *pdContext, const StackSelectContext *mdContext
@@ -128,6 +132,7 @@ class TrdpEngine {
         void *pdContext, void *mdContext
 #endif
     );
+    void dispatchCyclicTransmissions(std::chrono::steady_clock::time_point now);
     void buildEndpoints();
     void processingLoop();
     bool initialiseDnr();

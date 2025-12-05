@@ -447,6 +447,25 @@ void TrdpEngine::markTopologyChanged() {
               << " OpTrain=" << opTrainTopoCounter << std::endl;
 }
 
+bool TrdpEngine::publishPdBuffer(EndpointHandle &endpoint, const std::vector<std::uint8_t> &buffer) {
+    if (!endpoint.pdHandleReady) {
+        std::cerr << "[TRDP] PD session not available; drop TX ComId " << endpoint.def.comId << std::endl;
+        return false;
+    }
+#ifdef TRDP_STACK_PRESENT
+    if (stackAvailable) {
+        TRDP_ERR_T err = tlp_put(pdSession, endpoint.pdPublishHandle, buffer.data(),
+                                 static_cast<UINT32>(buffer.size()));
+        if (err != TRDP_NO_ERR) {
+            std::cerr << "[TRDP] tlp_put failed for ComId " << endpoint.def.comId << ": " << err << std::endl;
+            return false;
+        }
+    }
+#endif
+    std::cout << "[TRDP] PD send ComId=" << endpoint.def.comId << " bytes=" << buffer.size() << std::endl;
+    return true;
+}
+
 bool TrdpEngine::initialiseDnr() {
 #ifdef TRDP_STACK_PRESENT
     const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
@@ -588,6 +607,34 @@ bool TrdpEngine::processStackOnce(
     return true;
 }
 
+void TrdpEngine::dispatchCyclicTransmissions(std::chrono::steady_clock::time_point now) {
+    for (auto &[comId, endpoint] : endpoints) {
+        if (endpoint.def.type != TelegramType::PD || endpoint.def.direction != Direction::Tx) {
+            continue;
+        }
+        if (!endpoint.txCyclicActive || endpoint.cycle.count() <= 0) {
+            continue;
+        }
+        if (endpoint.nextSend.time_since_epoch().count() == 0) {
+            endpoint.nextSend = now + endpoint.cycle;
+            continue;
+        }
+        if (now < endpoint.nextSend) {
+            continue;
+        }
+
+        const auto buffer = endpoint.runtime->getBufferCopy();
+        if (publishPdBuffer(endpoint, buffer)) {
+            endpoint.nextSend = now + endpoint.cycle;
+            if (auto *hub = TelegramHub::instance()) {
+                hub->publishTxConfirmation(comId, endpoint.runtime->snapshotFields());
+            }
+        } else {
+            endpoint.txCyclicActive = false;
+        }
+    }
+}
+
 void TrdpEngine::buildEndpoints() {
     endpoints.clear();
 
@@ -597,7 +644,7 @@ void TrdpEngine::buildEndpoints() {
             std::cerr << "[TRDP] Failed to allocate runtime for ComId " << telegram.comId << std::endl;
             continue;
         }
-        EndpointHandle handle{.def = telegram, .runtime = runtime};
+        EndpointHandle handle{.def = telegram, .runtime = runtime, .cycle = telegram.cycle};
 
         if (telegram.type == TelegramType::MD) {
             handle.mdHandleReady = mdSessionInitialised;
@@ -632,13 +679,14 @@ void TrdpEngine::buildEndpoints() {
                 TRDP_ERR_T pdErr{};
                 if (telegram.direction == Direction::Tx) {
                     pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, this, nullptr, 0U, telegram.comId,
-                                        etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, 0U, 0U, 0U,
+                                        etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, telegram.srcPort,
+                                        telegram.destPort, 0U,
                                         &sendParam, buffer.data(), static_cast<UINT32>(buffer.size()));
                 } else {
                     pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
                                            telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
-                                           telegram.srcIp, telegram.destIp, TRDP_FLAGS_DEFAULT, &recvParams, 0U,
-                                           static_cast<TRDP_TO_BEHAVIOR_T>(0U));
+                                           telegram.destIp, telegram.srcPort, telegram.destPort, TRDP_FLAGS_DEFAULT,
+                                           &recvParams, 0U, static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
@@ -739,6 +787,7 @@ TrdpEngine::EndpointHandle *TrdpEngine::findEndpoint(std::uint32_t comId) {
 }
 
 bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields) {
+    std::lock_guard lock(stateMtx);
     auto *endpoint = findEndpoint(comId);
     if (endpoint == nullptr) {
         std::cerr << "[TRDP] Unknown TX ComId " << comId << std::endl;
@@ -757,6 +806,7 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
     const auto buffer = encodeFieldsToBuffer(*endpoint->runtime, mergedFields);
     endpoint->runtime->overwriteBuffer(buffer);
 
+    bool sent = false;
     if (endpoint->def.type == TelegramType::MD) {
         if (!endpoint->mdHandleReady) {
             std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
@@ -777,28 +827,21 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         }
 #endif
         std::cout << "[TRDP] MD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+        sent = true;
     } else {
-        if (!endpoint->pdHandleReady) {
-            std::cerr << "[TRDP] PD session not available; drop TX ComId " << comId << std::endl;
-            return false;
-        }
-#ifdef TRDP_STACK_PRESENT
-        if (stackAvailable) {
-            TRDP_ERR_T err = tlp_put(pdSession, endpoint->pdPublishHandle, buffer.data(),
-                                     static_cast<UINT32>(buffer.size()));
-            if (err != TRDP_NO_ERR) {
-                std::cerr << "[TRDP] tlp_put failed for ComId " << comId << ": " << err << std::endl;
-                return false;
-            }
-        }
-#endif
-        std::cout << "[TRDP] PD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+        sent = publishPdBuffer(*endpoint, buffer);
     }
 
-    if (auto *hub = TelegramHub::instance()) {
+    if (sent && auto *hub = TelegramHub::instance()) {
         hub->publishTxConfirmation(comId, mergedFields);
     }
-    return true;
+
+    if (sent && endpoint->def.type == TelegramType::PD && endpoint->cycle.count() > 0) {
+        endpoint->txCyclicActive = true;
+        endpoint->nextSend = std::chrono::steady_clock::now() + endpoint->cycle;
+    }
+
+    return sent;
 }
 
 void TrdpEngine::handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload) {
@@ -964,6 +1007,7 @@ void TrdpEngine::processingLoop() {
         const auto pdContext = pdSessionInitialised ? prepareSelectContext(pdSession) : std::nullopt;
         const auto mdContext = mdSessionInitialised ? prepareSelectContext(mdSession) : std::nullopt;
 #endif
+        dispatchCyclicTransmissions(std::chrono::steady_clock::now());
         const auto waitDuration = stackIntervalHint();
 
         // Release the lock while doing any heavier processing or callbacks.
