@@ -4,6 +4,8 @@
 
 #include <drogon/drogon.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -19,8 +21,11 @@ struct CliOptions {
     std::string xmlPath;
     std::string trdpRxIface;
     std::string trdpTxIface;
+    std::string trdpHostsFile;
     std::string staticRoot;
     std::uint16_t threads{0};
+    bool enableDnr{false};
+    bool enableEcsp{false};
     bool showHelp{false};
 };
 
@@ -33,6 +38,14 @@ std::optional<std::uint16_t> parsePort(const std::string &value) {
     } catch (const std::exception &) {
     }
     return std::nullopt;
+}
+
+bool parseBool(const std::string &value) {
+    std::string lowered(value.size(), '\0');
+    std::transform(value.begin(), value.end(), lowered.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on";
 }
 
 std::optional<std::string> readEnv(const char *name) {
@@ -49,6 +62,9 @@ void printUsage(const char *exe) {
               << "  --xml <path>           Path to TRDP XML config (env: TRDP_XML_PATH)\n"
               << "  --trdp-rx-iface <if>   Interface name for RX (env: TRDP_RX_IFACE)\n"
               << "  --trdp-tx-iface <if>   Interface name for TX (env: TRDP_TX_IFACE)\n"
+              << "  --trdp-hosts-file <f>  Hosts file for DNR lookups (env: TRDP_HOSTS_FILE)\n"
+              << "  --enable-dnr           Enable TAU DNR initialisation (env: TRDP_ENABLE_DNR)\n"
+              << "  --enable-ecsp          Enable TAU ECSP control (env: TRDP_ENABLE_ECSP)\n"
               << "  --static-root <path>   Directory for UI assets (env: TRDP_STATIC_ROOT)\n"
               << "  --threads <n>          Worker threads for Drogon (default: hardware concurrency)\n"
               << "  --help                 Show this help message\n";
@@ -71,6 +87,15 @@ CliOptions parseArgs(int argc, char **argv) {
     }
     if (auto envTx = readEnv("TRDP_TX_IFACE")) {
         opts.trdpTxIface = *envTx;
+    }
+    if (auto envHosts = readEnv("TRDP_HOSTS_FILE")) {
+        opts.trdpHostsFile = *envHosts;
+    }
+    if (auto envDnr = readEnv("TRDP_ENABLE_DNR")) {
+        opts.enableDnr = parseBool(*envDnr);
+    }
+    if (auto envEcsp = readEnv("TRDP_ENABLE_ECSP")) {
+        opts.enableEcsp = parseBool(*envEcsp);
     }
     if (auto envStatic = readEnv("TRDP_STATIC_ROOT")) {
         opts.staticRoot = *envStatic;
@@ -95,6 +120,13 @@ CliOptions parseArgs(int argc, char **argv) {
         } else if (arg == "--trdp-tx-iface" && i + 1 < argc) {
             opts.trdpTxIface = argv[i + 1];
             ++i;
+        } else if (arg == "--trdp-hosts-file" && i + 1 < argc) {
+            opts.trdpHostsFile = argv[i + 1];
+            ++i;
+        } else if (arg == "--enable-dnr") {
+            opts.enableDnr = true;
+        } else if (arg == "--enable-ecsp") {
+            opts.enableEcsp = true;
         } else if (arg == "--threads" && i + 1 < argc) {
             if (auto parsed = parsePort(argv[i + 1])) {
                 opts.threads = *parsed;
@@ -115,6 +147,15 @@ void applyTrdpEnv(const CliOptions &opts) {
     }
     if (!opts.trdpTxIface.empty()) {
         setenv("TRDP_TX_IFACE", opts.trdpTxIface.c_str(), 1);
+    }
+    if (!opts.trdpHostsFile.empty()) {
+        setenv("TRDP_HOSTS_FILE", opts.trdpHostsFile.c_str(), 1);
+    }
+    if (opts.enableDnr) {
+        setenv("TRDP_ENABLE_DNR", "1", 1);
+    }
+    if (opts.enableEcsp) {
+        setenv("TRDP_ENABLE_ECSP", "1", 1);
     }
 }
 
@@ -184,7 +225,15 @@ int main(int argc, char **argv) {
         app.setThreadNum(opts.threads);
     }
 
-    if (!TrdpEngine::instance().start()) {
+    TrdpEngine::TrdpConfig trdpConfig{
+        .rxInterface = opts.trdpRxIface,
+        .txInterface = opts.trdpTxIface,
+        .hostsFile = opts.trdpHostsFile,
+        .enableDnr = opts.enableDnr,
+        .enableEcsp = opts.enableEcsp,
+    };
+
+    if (!TrdpEngine::instance().start(trdpConfig)) {
         std::cerr << "Failed to start TRDP engine" << std::endl;
         return 1;
     }

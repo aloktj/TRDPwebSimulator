@@ -3,6 +3,7 @@
 #include "telegram_model.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <map>
@@ -28,8 +29,18 @@ class TrdpEngine {
   public:
     static TrdpEngine &instance();
 
+    struct TrdpConfig {
+        std::string rxInterface;
+        std::string txInterface;
+        std::string hostsFile;
+        bool enableDnr{false};
+        bool enableEcsp{false};
+        // How often the worker thread should wake up when no events are pending.
+        std::chrono::milliseconds idleInterval{std::chrono::milliseconds(50)};
+    };
+
     // Start TRDP stack and background worker. Idempotent.
-    bool start();
+    bool start(const TrdpConfig &config = {});
 
     // Stop worker thread and tear down handles. Safe to call multiple times.
     void stop();
@@ -59,6 +70,9 @@ class TrdpEngine {
 
     bool bootstrapRegistry();
     bool initialiseTrdpStack();
+    void teardownTrdpStack();
+    std::chrono::milliseconds stackIntervalHint() const;
+    bool processStackOnce();
     void buildEndpoints();
     void processingLoop();
 
@@ -68,6 +82,10 @@ class TrdpEngine {
     std::atomic<bool> stopRequested{false};
     bool pdSessionInitialised{false};
     bool mdSessionInitialised{false};
+    bool stackAvailable{false};
+    std::uint32_t etbTopoCounter{0};
+    std::uint32_t opTrainTopoCounter{0};
+    TrdpConfig config;
     std::thread worker;
     std::mutex stateMtx;
     std::condition_variable cv;
