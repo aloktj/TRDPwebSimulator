@@ -1,5 +1,7 @@
 #include "telegram_model.h"
 
+#include <arpa/inet.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -140,6 +142,16 @@ Direction parseDirection(const tinyxml2::XMLElement &element) {
         }
     }
     return Direction::Tx;
+}
+
+std::optional<std::uint32_t> parseIpAttribute(const tinyxml2::XMLElement &element, const char *name) {
+    if (const char *value = element.Attribute(name)) {
+        in_addr addr{};
+        if (inet_aton(value, &addr) != 0) {
+            return static_cast<std::uint32_t>(ntohl(addr.s_addr));
+        }
+    }
+    return std::nullopt;
 }
 
 TelegramType parseTelegramType(const tinyxml2::XMLElement &element) {
@@ -469,6 +481,14 @@ bool loadFromTauXml(const std::string &xmlPath) {
         } else {
             telegram.name = "ComId" + std::to_string(telegram.comId);
         }
+
+        if (const auto srcIp = parseIpAttribute(*tgNode, "srcIp")) {
+            telegram.srcIp = *srcIp;
+        }
+        if (const auto destIp = parseIpAttribute(*tgNode, "destIp")) {
+            telegram.destIp = *destIp;
+        }
+        telegram.ttl = static_cast<std::uint8_t>(parseSizeAttribute(*tgNode, "ttl", telegram.ttl));
 
         try {
             TelegramRegistry::instance().registerTelegram(telegram);
