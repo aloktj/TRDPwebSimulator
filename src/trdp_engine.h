@@ -82,6 +82,7 @@ class TrdpEngine {
     bool initialiseTrdpStack();
     void teardownTrdpStack();
     std::chrono::milliseconds stackIntervalHint() const;
+    void markTopologyChanged();
     bool processStackOnce();
     void buildEndpoints();
     void processingLoop();
@@ -101,6 +102,7 @@ class TrdpEngine {
 #endif
     std::uint32_t etbTopoCounter{0};
     std::uint32_t opTrainTopoCounter{0};
+    bool topologyCountersDirty{false};
     TrdpConfig config;
     std::thread worker;
     std::mutex stateMtx;
