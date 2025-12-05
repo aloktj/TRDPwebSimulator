@@ -278,16 +278,71 @@ bool TrdpEngine::bootstrapRegistry() {
 }
 
 bool TrdpEngine::initialiseTrdpStack() {
-    // Use the façade to mimic the lifecycle of tlc_init()/tlc_openSession().
-    if (!stackFacade.initialise()) {
-        std::cerr << "[TRDP] Stack initialisation failed" << std::endl;
-        return false;
+    // Placeholder for tlc_init()/tau_init() depending on the TRDP stack presence.
+    // Keep the logging explicit so failures are visible in headless runs.
+    std::cout << "[TRDP] Initialising stack..." << std::endl;
+    if (stackAvailable) {
+        std::cout << "[TRDP] Requested RX iface: " << (config.rxInterface.empty() ? "<default>" : config.rxInterface)
+                  << std::endl;
+        std::cout << "[TRDP] Requested TX iface: " << (config.txInterface.empty() ? "<default>" : config.txInterface)
+                  << std::endl;
+        if (!config.hostsFile.empty()) {
+            std::cout << "[TRDP] Using hosts file: " << config.hostsFile << std::endl;
+        }
+        if (config.enableDnr) {
+            std::cout << "[TRDP] DNR initialisation enabled" << std::endl;
+        }
+        if (config.enableEcsp) {
+            std::cout << "[TRDP] ECSP control enabled" << std::endl;
+        }
+        // Future: add actual TRDP init calls and error checks here.
+    } else {
+        std::cout << "[TRDP] Stack not available at build time; running in stub mode" << std::endl;
     }
-
     pdSessionInitialised = true;
     mdSessionInitialised = true;
     std::cout << "[TRDP] PD session handle ready" << std::endl;
     std::cout << "[TRDP] MD session handle ready" << std::endl;
+    return true;
+}
+
+void TrdpEngine::teardownTrdpStack() {
+    if (!pdSessionInitialised && !mdSessionInitialised) {
+        return;
+    }
+
+    // TODO: call tlc_closeSession/tlc_terminate and TAU tear-down functions when available.
+    if (mdSessionInitialised) {
+        std::cout << "[TRDP] Shutting down MD session" << std::endl;
+    }
+    if (pdSessionInitialised) {
+        std::cout << "[TRDP] Shutting down PD session" << std::endl;
+    }
+    mdSessionInitialised = false;
+    pdSessionInitialised = false;
+}
+
+std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
+    // When the real stack is present, this should use tlc_getInterval/tlp_getInterval.
+    // Until then, expose the configured idle interval to keep the worker responsive.
+    if (config.idleInterval.count() > 0) {
+        return config.idleInterval;
+    }
+    return std::chrono::milliseconds(100);
+}
+
+bool TrdpEngine::processStackOnce() {
+    if (!running.load()) {
+        return false;
+    }
+
+    if (stackAvailable) {
+        // TODO: drive tlc_process()/tlp_processReceive()/tlp_processSend() here.
+        // Topology counters should be updated before processing when they change.
+        (void)etbTopoCounter;
+        (void)opTrainTopoCounter;
+    }
+
     return true;
 }
 
@@ -340,6 +395,7 @@ bool TrdpEngine::start(const TrdpConfig &cfg) {
         return false;
     }
     if (!initialiseTrdpStack()) {
+        teardownTrdpStack();
         return false;
     }
 
@@ -366,12 +422,8 @@ void TrdpEngine::stop() {
         worker.join();
     }
     running.store(false);
-    pdSessionInitialised = false;
-    mdSessionInitialised = false;
+    teardownTrdpStack();
     endpoints.clear();
-    stackFacade.shutdown();
-    std::cout << "[TRDP] MD session handle released" << std::endl;
-    std::cout << "[TRDP] PD session handle released" << std::endl;
     std::cout << "[TRDP] Stack stopped" << std::endl;
 }
 
@@ -456,10 +508,15 @@ void TrdpEngine::processingLoop() {
     std::cout << "[TRDP] Worker thread started" << std::endl;
     std::unique_lock lock(stateMtx);
     while (!stopRequested.load()) {
-        const auto waitFor = stackFacade.getProcessInterval();
-        cv.wait_for(lock, waitFor, [this]() { return stopRequested.load(); });
+        const auto waitDuration = stackIntervalHint();
+        cv.wait_for(lock, waitDuration, [this]() { return stopRequested.load(); });
+        if (stopRequested.load()) {
+            break;
+        }
+
+        // Release the lock while doing any heavier processing or callbacks.
         lock.unlock();
-        stackFacade.processTick();
+        processStackOnce();
         lock.lock();
     }
     std::cout << "[TRDP] Worker thread exiting" << std::endl;

@@ -3,6 +3,7 @@
 #include "telegram_model.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <map>
@@ -34,6 +35,8 @@ class TrdpEngine {
         std::string hostsFile;
         bool enableDnr{false};
         bool enableEcsp{false};
+        // How often the worker thread should wake up when no events are pending.
+        std::chrono::milliseconds idleInterval{std::chrono::milliseconds(50)};
     };
 
     // Start TRDP stack and background worker. Idempotent.
@@ -67,6 +70,9 @@ class TrdpEngine {
 
     bool bootstrapRegistry();
     bool initialiseTrdpStack();
+    void teardownTrdpStack();
+    std::chrono::milliseconds stackIntervalHint() const;
+    bool processStackOnce();
     void buildEndpoints();
     void processingLoop();
 
@@ -77,6 +83,8 @@ class TrdpEngine {
     bool pdSessionInitialised{false};
     bool mdSessionInitialised{false};
     bool stackAvailable{false};
+    std::uint32_t etbTopoCounter{0};
+    std::uint32_t opTrainTopoCounter{0};
     TrdpConfig config;
     std::thread worker;
     std::mutex stateMtx;
