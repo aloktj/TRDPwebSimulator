@@ -69,6 +69,9 @@ struct TelegramDef {
     Direction direction{Direction::Tx};
     TelegramType type{TelegramType::PD};
     std::string datasetName;
+    std::uint32_t srcIp{0};
+    std::uint32_t destIp{0};
+    std::uint8_t ttl{64};
 };
 
 FieldValue defaultValueForField(const FieldDef &field);

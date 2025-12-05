@@ -603,11 +603,10 @@ void TrdpEngine::buildEndpoints() {
             handle.mdHandleReady = mdSessionInitialised;
 #ifdef TRDP_STACK_PRESENT
             if (handle.mdHandleReady && stackAvailable) {
-                TRDP_IP_ADDR_T anyAddr = 0U;
                 TRDP_URI_USER_T emptyUri{};
-                TRDP_ERR_T mdErr =
-                    tlm_addListener(mdSession, &handle.mdListenerHandle, this, mdReceiveCallback, TRUE, telegram.comId,
-                                    etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, anyAddr, 0U, emptyUri, emptyUri);
+                TRDP_ERR_T mdErr = tlm_addListener(mdSession, &handle.mdListenerHandle, this, mdReceiveCallback, TRUE,
+                                                   telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
+                                                   telegram.srcIp, telegram.destIp, 0U, emptyUri, emptyUri);
                 handle.mdHandleReady = (mdErr == TRDP_NO_ERR);
                 if (mdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] tlm_addListener failed for ComId " << telegram.comId << ": " << mdErr
@@ -626,18 +625,20 @@ void TrdpEngine::buildEndpoints() {
 #ifdef TRDP_STACK_PRESENT
             if (handle.pdHandleReady && stackAvailable) {
                 TRDP_SEND_PARAM_T sendParam{};
-                TRDP_IP_ADDR_T anyAddr = 0U;
+                sendParam.ttl = telegram.ttl;
                 TRDP_COM_PARAM_T recvParams{};
+                recvParams.ttl = telegram.ttl;
                 const auto buffer = runtime->getBufferCopy();
                 TRDP_ERR_T pdErr{};
                 if (telegram.direction == Direction::Tx) {
                     pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, this, nullptr, 0U, telegram.comId,
-                                        etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, 0U, 0U, 0U, &sendParam,
-                                        buffer.data(), static_cast<UINT32>(buffer.size()));
+                                        etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, 0U, 0U, 0U,
+                                        &sendParam, buffer.data(), static_cast<UINT32>(buffer.size()));
                 } else {
                     pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
-                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, anyAddr,
-                                           TRDP_FLAGS_DEFAULT, &recvParams, 0U, static_cast<TRDP_TO_BEHAVIOR_T>(0U));
+                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
+                                           telegram.srcIp, telegram.destIp, TRDP_FLAGS_DEFAULT, &recvParams, 0U,
+                                           static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
@@ -764,10 +765,11 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
 #ifdef TRDP_STACK_PRESENT
         if (stackAvailable) {
             TRDP_SEND_PARAM_T sendParam{};
-            TRDP_IP_ADDR_T anyAddr = 0U;
+            sendParam.ttl = endpoint->def.ttl;
             TRDP_ERR_T err = tlm_request(mdSession, this, mdReceiveCallback, &endpoint->mdSessionId, comId,
-                                         etbTopoCounter, opTrainTopoCounter, anyAddr, anyAddr, 0U, 0U, 0U, &sendParam,
-                                         buffer.data(), static_cast<UINT32>(buffer.size()), nullptr, nullptr);
+                                         etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp, endpoint->def.destIp,
+                                         0U, 0U, 0U, &sendParam, buffer.data(), static_cast<UINT32>(buffer.size()), nullptr,
+                                         nullptr);
             if (err != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlm_request failed for ComId " << comId << ": " << err << std::endl;
                 return false;
