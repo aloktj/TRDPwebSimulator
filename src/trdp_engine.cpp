@@ -5,9 +5,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <sys/select.h>
 #include <type_traits>
 #include <utility>
 
@@ -37,6 +39,12 @@ template <typename T> T readLe(const std::uint8_t *data) {
     std::memcpy(&value, data, sizeof(T));
     return value;
 }
+
+#ifdef TRDP_STACK_PRESENT
+std::chrono::milliseconds toDuration(const TRDP_TIME_T &time) {
+    return std::chrono::milliseconds(time.tv_usec / 1000 + time.tv_sec * 1000);
+}
+#endif
 
 template <typename T> void writeLe(std::uint8_t *dest, T value) { std::memcpy(dest, &value, sizeof(T)); }
 
@@ -315,18 +323,18 @@ void TrdpEngine::teardownTrdpStack() {
 std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
-        TRDP_TIME_T interval{};
-        const auto toDuration = [](const TRDP_TIME_T &time) {
-            return std::chrono::milliseconds(time.tv_usec / 1000 + time.tv_sec * 1000);
-        };
         const auto resolveInterval = [&](TRDP_APP_SESSION_T session) -> std::optional<std::chrono::milliseconds> {
             if (!session) {
                 return std::nullopt;
             }
 
-            TRDP_ERR_T err = tlc_getInterval(session, &interval, nullptr, nullptr);
+            TRDP_TIME_T interval{};
+            TRDP_FDS_T readFds{};
+            TRDP_FDS_T writeFds{};
+            INT32 noDesc = 0;
+            TRDP_ERR_T err = tlc_getInterval(session, &interval, &readFds, &noDesc);
             if (err != TRDP_NO_ERR) {
-                err = tlp_getInterval(session, &interval, nullptr, nullptr);
+                err = tlp_getInterval(session, &interval, &writeFds, &noDesc);
             }
 
             if (err == TRDP_NO_ERR) {
@@ -354,6 +362,28 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
     }
     return std::chrono::milliseconds(100);
 }
+
+#ifdef TRDP_STACK_PRESENT
+std::optional<TrdpEngine::StackSelectContext> TrdpEngine::prepareSelectContext(TRDP_APP_SESSION_T session) const {
+    if (!stackAvailable || session == nullptr) {
+        return std::nullopt;
+    }
+
+    StackSelectContext context{};
+    TRDP_ERR_T err = tlc_getInterval(session, &context.interval, &context.readFds, &context.maxFd);
+    if (err != TRDP_NO_ERR) {
+        err = tlp_getInterval(session, &context.interval, &context.writeFds, &context.maxFd);
+    }
+
+    if (err != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] Failed to obtain stack interval: " << err << std::endl;
+        return std::nullopt;
+    }
+
+    context.valid = true;
+    return context;
+}
+#endif
 
 void TrdpEngine::logConfigError(const std::string &context, TRDP_ERR_T err) const {
     std::cerr << "[TRDP] " << context << " failed: " << err;
@@ -491,10 +521,21 @@ void TrdpEngine::pollEcspStatus() {
 #endif
 }
 
-bool TrdpEngine::processStackOnce() {
+bool TrdpEngine::processStackOnce(
+#ifdef TRDP_STACK_PRESENT
+    const StackSelectContext *pdContext, const StackSelectContext *mdContext
+#else
+    void *pdContext, void *mdContext
+#endif
+) {
     if (!running.load()) {
         return false;
     }
+
+#ifndef TRDP_STACK_PRESENT
+    (void)pdContext;
+    (void)mdContext;
+#endif
 
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
@@ -521,13 +562,19 @@ bool TrdpEngine::processStackOnce() {
         }
 
         if (pdSessionInitialised) {
-            const TRDP_ERR_T pdErr = tlc_process(pdSession, nullptr, nullptr);
+            TRDP_FDS_T pdFds = pdContext ? pdContext->readFds : TRDP_FDS_T{};
+            INT32 pdDesc = pdContext ? pdContext->maxFd : 0;
+            const TRDP_ERR_T pdErr = tlc_process(pdSession, pdContext ? &pdFds : nullptr,
+                                                 pdContext ? &pdDesc : nullptr);
             if (pdErr != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlc_process (PD) failed: " << pdErr << std::endl;
             }
         }
         if (mdSessionInitialised) {
-            const TRDP_ERR_T mdErr = tlc_process(mdSession, nullptr, nullptr);
+            TRDP_FDS_T mdFds = mdContext ? mdContext->readFds : TRDP_FDS_T{};
+            INT32 mdDesc = mdContext ? mdContext->maxFd : 0;
+            const TRDP_ERR_T mdErr = tlc_process(mdSession, mdContext ? &mdFds : nullptr,
+                                                 mdContext ? &mdDesc : nullptr);
             if (mdErr != TRDP_NO_ERR) {
                 std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
             }
@@ -911,15 +958,53 @@ void TrdpEngine::processingLoop() {
     std::cout << "[TRDP] Worker thread started" << std::endl;
     std::unique_lock lock(stateMtx);
     while (!stopRequested.load()) {
+#ifdef TRDP_STACK_PRESENT
+        const auto pdContext = pdSessionInitialised ? prepareSelectContext(pdSession) : std::nullopt;
+        const auto mdContext = mdSessionInitialised ? prepareSelectContext(mdSession) : std::nullopt;
+#endif
         const auto waitDuration = stackIntervalHint();
-        cv.wait_for(lock, waitDuration, [this]() { return stopRequested.load(); });
-        if (stopRequested.load()) {
-            break;
-        }
 
         // Release the lock while doing any heavier processing or callbacks.
         lock.unlock();
-        processStackOnce();
+
+#ifdef TRDP_STACK_PRESENT
+        if (stackAvailable && ((pdContext && pdContext->valid) || (mdContext && mdContext->valid))) {
+            auto waitOnContext = [](StackSelectContext &context, const char *label) {
+                timeval tv{};
+                tv.tv_sec = static_cast<time_t>(context.interval.tv_sec);
+                tv.tv_usec = static_cast<suseconds_t>(context.interval.tv_usec);
+                const int rv = select(context.maxFd + 1, &context.readFds, &context.writeFds, nullptr, &tv);
+                if (rv < 0 && errno != EINTR) {
+                    std::cerr << "[TRDP] select(" << label << ") failed: " << errno << std::endl;
+                }
+            };
+
+            StackSelectContext pdActiveContext{};
+            StackSelectContext mdActiveContext{};
+            const StackSelectContext *pdPtr = nullptr;
+            const StackSelectContext *mdPtr = nullptr;
+
+            if (pdContext && pdContext->valid) {
+                pdActiveContext = *pdContext;
+                waitOnContext(pdActiveContext, "PD");
+                pdPtr = &pdActiveContext;
+            }
+            if (mdContext && mdContext->valid) {
+                mdActiveContext = *mdContext;
+                waitOnContext(mdActiveContext, "MD");
+                mdPtr = &mdActiveContext;
+            }
+
+            processStackOnce(pdPtr, mdPtr);
+        } else {
+            std::this_thread::sleep_for(waitDuration);
+            processStackOnce(nullptr, nullptr);
+        }
+#else
+        std::this_thread::sleep_for(waitDuration);
+        processStackOnce(nullptr, nullptr);
+#endif
+
         lock.lock();
     }
     std::cout << "[TRDP] Worker thread exiting" << std::endl;
