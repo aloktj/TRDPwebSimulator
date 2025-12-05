@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <optional>
 
 #ifdef TRDP_STACK_PRESENT
 #include <tau_ctrl.h>
@@ -305,8 +306,36 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
         TRDP_TIME_T interval{};
-        if (pdSessionInitialised && tlc_getInterval(pdSession, &interval, nullptr) == TRDP_NO_ERR) {
-            return std::chrono::milliseconds(interval.tv_usec / 1000 + interval.tv_sec * 1000);
+        const auto toDuration = [](const TRDP_TIME_T &time) {
+            return std::chrono::milliseconds(time.tv_usec / 1000 + time.tv_sec * 1000);
+        };
+        const auto resolveInterval = [&](TRDP_APP_SESSION_T session) -> std::optional<std::chrono::milliseconds> {
+            if (!session) {
+                return std::nullopt;
+            }
+
+            TRDP_ERR_T err = tlc_getInterval(session, &interval, nullptr);
+            if (err != TRDP_NO_ERR) {
+                err = tlp_getInterval(session, &interval);
+            }
+
+            if (err == TRDP_NO_ERR) {
+                return toDuration(interval);
+            }
+
+            std::cerr << "[TRDP] Failed to obtain stack interval: " << err << std::endl;
+            return std::nullopt;
+        };
+
+        if (pdSessionInitialised) {
+            if (const auto pdInterval = resolveInterval(pdSession)) {
+                return *pdInterval;
+            }
+        }
+        if (mdSessionInitialised) {
+            if (const auto mdInterval = resolveInterval(mdSession)) {
+                return *mdInterval;
+            }
         }
 #endif
     }
@@ -316,6 +345,14 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
     return std::chrono::milliseconds(100);
 }
 
+void TrdpEngine::markTopologyChanged() {
+    ++etbTopoCounter;
+    ++opTrainTopoCounter;
+    topologyCountersDirty = true;
+    std::cout << "[TRDP] Topology change detected; ETB=" << etbTopoCounter
+              << " OpTrain=" << opTrainTopoCounter << std::endl;
+}
+
 bool TrdpEngine::processStackOnce() {
     if (!running.load()) {
         return false;
@@ -323,15 +360,40 @@ bool TrdpEngine::processStackOnce() {
 
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
-        // Topology counters should be updated before processing when they change.
-        (void)etbTopoCounter;
-        (void)opTrainTopoCounter;
+        const auto setTopologyCounters = [&](TRDP_APP_SESSION_T session) {
+            if (!session) {
+                return;
+            }
+            const TRDP_ERR_T etbErr = tlc_setETBTopoCount(session, etbTopoCounter);
+            const TRDP_ERR_T opErr = tlc_setOpTrainTopoCount(session, opTrainTopoCounter);
+            if (etbErr != TRDP_NO_ERR || opErr != TRDP_NO_ERR) {
+                std::cerr << "[TRDP] Failed to update topology counters; ETB err=" << etbErr
+                          << " OpTrain err=" << opErr << std::endl;
+            }
+        };
+
+        if (topologyCountersDirty) {
+            if (pdSessionInitialised) {
+                setTopologyCounters(pdSession);
+            }
+            if (mdSessionInitialised) {
+                setTopologyCounters(mdSession);
+            }
+            topologyCountersDirty = false;
+        }
+
         TRDP_TIME_T rcvTime{};
         if (pdSessionInitialised) {
-            tlc_process(pdSession, &rcvTime, nullptr);
+            const TRDP_ERR_T pdErr = tlc_process(pdSession, &rcvTime, nullptr);
+            if (pdErr != TRDP_NO_ERR) {
+                std::cerr << "[TRDP] tlc_process (PD) failed: " << pdErr << std::endl;
+            }
         }
         if (mdSessionInitialised) {
-            tlc_process(mdSession, &rcvTime, nullptr);
+            const TRDP_ERR_T mdErr = tlc_process(mdSession, &rcvTime, nullptr);
+            if (mdErr != TRDP_NO_ERR) {
+                std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
+            }
         }
 #endif
     }
@@ -411,11 +473,22 @@ void TrdpEngine::buildEndpoints() {
 
 bool TrdpEngine::start(const TrdpConfig &cfg) {
     std::lock_guard lock(stateMtx);
+    const bool configChanged = !running.load() || config.rxInterface != cfg.rxInterface || config.txInterface != cfg.txInterface ||
+                               config.hostsFile != cfg.hostsFile || config.enableDnr != cfg.enableDnr ||
+                               config.enableEcsp != cfg.enableEcsp || config.idleInterval != cfg.idleInterval;
+
     if (running.load()) {
+        if (configChanged) {
+            config = cfg;
+            markTopologyChanged();
+        }
         return true;
     }
 
     config = cfg;
+    if (configChanged) {
+        markTopologyChanged();
+    }
 #ifdef TRDP_STACK_PRESENT
     stackAvailable = true;
 #else
