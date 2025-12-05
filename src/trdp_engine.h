@@ -70,6 +70,12 @@ class TrdpEngine {
         std::shared_ptr<TelegramRuntime> runtime;
         bool pdHandleReady{false};
         bool mdHandleReady{false};
+#ifdef TRDP_STACK_PRESENT
+        TRDP_PUB_T pdPublishHandle{};
+        TRDP_SUB_T pdSubscribeHandle{};
+        TRDP_LIS_T mdListenerHandle{};
+        TRDP_REQUEST_T mdRequestHandle{};
+#endif
     };
 
     bool bootstrapRegistry();

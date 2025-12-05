@@ -15,6 +15,13 @@
 namespace trdp {
 namespace {
 
+#ifdef TRDP_STACK_PRESENT
+void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_PD_INFO_T *pInfo, const UINT8 *pData,
+                       UINT32 dataSize);
+void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_MD_INFO_T *pInfo, const UINT8 *pData,
+                       UINT32 dataSize);
+#endif
+
 template <typename T> T readLe(const std::uint8_t *data) {
     T value{};
     std::memcpy(&value, data, sizeof(T));
@@ -345,6 +352,21 @@ void TrdpEngine::buildEndpoints() {
 
         if (telegram.type == TelegramType::MD) {
             handle.mdHandleReady = mdSessionInitialised;
+#ifdef TRDP_STACK_PRESENT
+            if (handle.mdHandleReady && stackAvailable) {
+                TRDP_SEND_PARAM_T sendParam{};
+                TRDP_UUID_T uuid{};
+                TRDP_IP_ADDR_T anyAddr = 0U;
+                TRDP_ERR_T mdErr = tlm_addListener(mdSession, &handle.mdListenerHandle, &uuid, &uuid, anyAddr,
+                                                   telegram.comId, etbTopoCounter, opTrainTopoCounter, anyAddr,
+                                                   mdReceiveCallback, this, 0U, anyAddr, &sendParam);
+                handle.mdHandleReady = (mdErr == TRDP_NO_ERR);
+                if (mdErr != TRDP_NO_ERR) {
+                    std::cerr << "[TRDP] tlm_addListener failed for ComId " << telegram.comId << ": " << mdErr
+                              << std::endl;
+                }
+            }
+#endif
             if (handle.mdHandleReady) {
                 std::cout << "[TRDP] Binding MD endpoint for ComId " << telegram.comId << std::endl;
             } else {
@@ -353,6 +375,29 @@ void TrdpEngine::buildEndpoints() {
             }
         } else {
             handle.pdHandleReady = pdSessionInitialised;
+#ifdef TRDP_STACK_PRESENT
+            if (handle.pdHandleReady && stackAvailable) {
+                TRDP_SEND_PARAM_T sendParam{};
+                TRDP_UUID_T uuid{};
+                TRDP_IP_ADDR_T anyAddr = 0U;
+                const auto buffer = runtime->getBufferCopy();
+                TRDP_ERR_T pdErr{};
+                if (telegram.direction == Direction::Tx) {
+                    pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, &uuid, &uuid, anyAddr, anyAddr,
+                                        telegram.comId, etbTopoCounter, opTrainTopoCounter, 0U, 0U,
+                                        static_cast<UINT32>(buffer.size()), buffer.data(), FALSE, FALSE, &sendParam);
+                } else {
+                    pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, &uuid, anyAddr, telegram.comId,
+                                           anyAddr, etbTopoCounter, opTrainTopoCounter, 0U, pdReceiveCallback, this,
+                                           0U, anyAddr, &sendParam);
+                }
+                handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
+                if (pdErr != TRDP_NO_ERR) {
+                    std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": " << pdErr
+                              << std::endl;
+                }
+            }
+#endif
             if (handle.pdHandleReady) {
                 std::cout << "[TRDP] Binding PD endpoint for ComId " << telegram.comId << std::endl;
             } else {
@@ -445,12 +490,36 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
             std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
             return false;
         }
+#ifdef TRDP_STACK_PRESENT
+        if (stackAvailable) {
+            TRDP_SEND_PARAM_T sendParam{};
+            TRDP_UUID_T uuid{};
+            TRDP_IP_ADDR_T anyAddr = 0U;
+            TRDP_ERR_T err = tlm_request(mdSession, &endpoint->mdRequestHandle, &uuid, &uuid, anyAddr, anyAddr,
+                                         comId, etbTopoCounter, opTrainTopoCounter, 0U, 0U, buffer.data(),
+                                         static_cast<UINT32>(buffer.size()), mdReceiveCallback, this, &sendParam);
+            if (err != TRDP_NO_ERR) {
+                std::cerr << "[TRDP] tlm_request failed for ComId " << comId << ": " << err << std::endl;
+                return false;
+            }
+        }
+#endif
         std::cout << "[TRDP] MD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
     } else {
         if (!endpoint->pdHandleReady) {
             std::cerr << "[TRDP] PD session not available; drop TX ComId " << comId << std::endl;
             return false;
         }
+#ifdef TRDP_STACK_PRESENT
+        if (stackAvailable) {
+            TRDP_ERR_T err = tlp_put(pdSession, endpoint->pdPublishHandle, buffer.data(),
+                                     static_cast<UINT32>(buffer.size()));
+            if (err != TRDP_NO_ERR) {
+                std::cerr << "[TRDP] tlp_put failed for ComId " << comId << ": " << err << std::endl;
+                return false;
+            }
+        }
+#endif
         std::cout << "[TRDP] PD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
     }
 
@@ -482,6 +551,39 @@ void TrdpEngine::handleRxMdTelegram(std::uint32_t comId, const std::vector<std::
     std::cout << "[TRDP] MD telegram callback ComId=" << comId << " bytes=" << payload.size() << std::endl;
     handleRxTelegram(comId, payload);
 }
+
+#ifdef TRDP_STACK_PRESENT
+void pdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_PD_INFO_T *pInfo, const UINT8 *pData,
+                       UINT32 dataSize) {
+    if (refCon == nullptr || pInfo == nullptr || pData == nullptr) {
+        return;
+    }
+    if (pInfo->result != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] PD receive error for ComId " << pInfo->comId << ": " << pInfo->result << std::endl;
+        return;
+    }
+    auto *engine = static_cast<TrdpEngine *>(refCon);
+    std::vector<std::uint8_t> payload(pData, pData + dataSize);
+    engine->handleRxTelegram(pInfo->comId, payload);
+}
+
+void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T /*session*/, const TRDP_MD_INFO_T *pInfo, const UINT8 *pData,
+                       UINT32 dataSize) {
+    if (refCon == nullptr || pInfo == nullptr) {
+        return;
+    }
+    auto *engine = static_cast<TrdpEngine *>(refCon);
+    if (pInfo->result != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] MD receive error for ComId " << pInfo->comId << ": " << pInfo->result << std::endl;
+        return;
+    }
+    const std::uint8_t *payloadPtr = pData;
+    const UINT32 payloadSize = dataSize;
+    if (payloadPtr != nullptr && payloadSize > 0U) {
+        engine->handleRxMdTelegram(pInfo->comId, std::vector<std::uint8_t>(payloadPtr, payloadPtr + payloadSize));
+    }
+}
+#endif
 
 void TrdpEngine::processingLoop() {
     std::cout << "[TRDP] Worker thread started" << std::endl;
