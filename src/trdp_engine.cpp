@@ -323,11 +323,18 @@ void TrdpEngine::buildEndpoints() {
     }
 }
 
-bool TrdpEngine::start() {
+bool TrdpEngine::start(const TrdpConfig &cfg) {
     std::lock_guard lock(stateMtx);
     if (running.load()) {
         return true;
     }
+
+    config = cfg;
+#ifdef TRDP_STACK_PRESENT
+    stackAvailable = true;
+#else
+    stackAvailable = false;
+#endif
 
     if (!bootstrapRegistry()) {
         return false;
