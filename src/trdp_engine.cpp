@@ -663,9 +663,12 @@ void TrdpEngine::buildEndpoints() {
 #endif
             if (handle.mdHandleReady) {
                 std::cout << "[TRDP] Binding MD endpoint for ComId " << telegram.comId << std::endl;
-            } else {
+            } else if (!mdSessionInitialised) {
                 std::cerr << "[TRDP] MD session not initialised; unable to bind ComId " << telegram.comId
                           << std::endl;
+            } else {
+                std::cerr << "[TRDP] Failed to bind MD endpoint for ComId " << telegram.comId
+                          << "; see previous errors" << std::endl;
             }
         } else {
             handle.pdHandleReady = pdSessionInitialised;
@@ -700,9 +703,12 @@ void TrdpEngine::buildEndpoints() {
 #endif
             if (handle.pdHandleReady) {
                 std::cout << "[TRDP] Binding PD endpoint for ComId " << telegram.comId << std::endl;
-            } else {
+            } else if (!pdSessionInitialised) {
                 std::cerr << "[TRDP] PD session not initialised; unable to bind ComId " << telegram.comId
                           << std::endl;
+            } else {
+                std::cerr << "[TRDP] Failed to bind PD endpoint for ComId " << telegram.comId
+                          << "; see previous errors" << std::endl;
             }
         }
         endpoints.emplace(telegram.comId, std::move(handle));
