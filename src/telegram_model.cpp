@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -213,6 +214,14 @@ std::optional<std::string> parseDatasetRef(const tinyxml2::XMLElement &element) 
         }
     }
     return std::nullopt;
+}
+
+std::optional<std::uint16_t> parsePort(const tinyxml2::XMLElement &element, const char *attrName) {
+    const auto value = parseSizeAttribute(element, attrName, 0U);
+    if (value == 0U) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint16_t>(value);
 }
 
 bool elementMatches(const tinyxml2::XMLElement &element, const std::vector<std::string> &names) {
@@ -489,6 +498,18 @@ bool loadFromTauXml(const std::string &xmlPath) {
             telegram.destIp = *destIp;
         }
         telegram.ttl = static_cast<std::uint8_t>(parseSizeAttribute(*tgNode, "ttl", telegram.ttl));
+        if (const auto srcPort = parsePort(*tgNode, "srcPort")) {
+            telegram.srcPort = *srcPort;
+        }
+        if (const auto destPort = parsePort(*tgNode, "destPort")) {
+            telegram.destPort = *destPort;
+        } else if (const auto commonPort = parsePort(*tgNode, "port")) {
+            telegram.destPort = *commonPort;
+        }
+        const auto cycleMs = parseSizeAttribute(*tgNode, "cycle", 0U);
+        if (cycleMs > 0U) {
+            telegram.cycle = std::chrono::milliseconds(cycleMs);
+        }
 
         try {
             TelegramRegistry::instance().registerTelegram(telegram);

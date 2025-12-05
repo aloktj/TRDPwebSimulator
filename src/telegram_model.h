@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -72,6 +73,9 @@ struct TelegramDef {
     std::uint32_t srcIp{0};
     std::uint32_t destIp{0};
     std::uint8_t ttl{64};
+    std::uint16_t srcPort{17224};
+    std::uint16_t destPort{17224};
+    std::chrono::milliseconds cycle{0};
 };
 
 FieldValue defaultValueForField(const FieldDef &field);
