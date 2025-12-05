@@ -249,6 +249,19 @@ std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
     return encodeFields(runtime.dataset(), fields);
 }
 
+#ifdef TRDP_STACK_PRESENT
+constexpr std::uint16_t kDefaultTrdpPort = 17224;
+
+std::uint16_t resolveDefaultPort(TelegramType type) {
+    for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
+        if (telegram.type == type && telegram.destPort != 0U) {
+            return telegram.destPort;
+        }
+    }
+    return kDefaultTrdpPort;
+}
+#endif
+
 void decodeFieldsIntoRuntime(const DatasetDef &dataset, TelegramRuntime &runtime, const std::vector<std::uint8_t> &payload) {
     runtime.overwriteBuffer(payload);
     for (const auto &field : dataset.fields) {
@@ -314,7 +327,16 @@ bool TrdpEngine::initialiseTrdpStack() {
         return false;
     }
 
-    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, nullptr, nullptr, nullptr);
+    const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
+    TRDP_PD_CONFIG_T pdDefault{};
+    pdDefault.port = pdDefaultPort;
+    pdDefault.sendParam.ttl = 64U;
+
+    TRDP_MD_CONFIG_T mdDefault{};
+    mdDefault.port = resolveDefaultPort(TelegramType::MD);
+    mdDefault.sendParam.ttl = 64U;
+
+    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, 0U, 0U, nullptr, &pdDefault, nullptr, nullptr);
     if (pdErr != TRDP_NO_ERR) {
         std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
         tlc_terminate();
@@ -322,7 +344,7 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
     pdSessionInitialised = true;
 
-    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, 0U, 0U, nullptr, nullptr, nullptr, nullptr);
+    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, 0U, 0U, nullptr, nullptr, &mdDefault, nullptr);
     if (mdErr != TRDP_NO_ERR) {
         std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
         tlc_closeSession(pdSession);
