@@ -16,6 +16,7 @@
 #include <set>
 #include <sstream>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <type_traits>
 #include <utility>
 
@@ -612,14 +613,17 @@ bool TrdpEngine::initialiseTrdpStack() {
 
     auto openMdSession = [&](std::uint16_t port) {
         TRDP_MD_CONFIG_T mdDefault{};
-        mdDefault.udpPort = port;
+        mdDefault.pfCbFunction = nullptr;
+        mdDefault.pRefCon = nullptr;
         mdDefault.sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
-        mdDefault.sendParam.ttl = 64U;
         mdDefault.flags = TRDP_FLAGS_NONE;
         mdDefault.replyTimeout = TRDP_MD_DEFAULT_REPLY_TIMEOUT;
         mdDefault.confirmTimeout = TRDP_MD_DEFAULT_CONFIRM_TIMEOUT;
         mdDefault.connectTimeout = TRDP_MD_DEFAULT_CONNECTION_TIMEOUT;
         mdDefault.sendingTimeout = TRDP_MD_DEFAULT_SENDING_TIMEOUT;
+        mdDefault.udpPort = port;
+        mdDefault.tcpPort = port;
+        mdDefault.maxNumSessions = TRDP_MD_MAX_NUM_SESSIONS;
 
         TRDP_APP_SESSION_T session{};
         const TRDP_ERR_T mdErr = tlc_openSession(&session, sessionIp, 0U, nullptr, nullptr, &mdDefault, nullptr);
@@ -627,6 +631,43 @@ bool TrdpEngine::initialiseTrdpStack() {
             std::cerr << "[TRDP] tlc_openSession for MD port " << port << " failed: " << mdErr << std::endl;
             return false;
         }
+
+        TRDP_TIME_T interval{};
+        TRDP_FDS_T readFds{};
+        TRDP_SOCK_T maxFd = 0;
+        if (tlc_getInterval(session, &interval, &readFds, &maxFd) == TRDP_NO_ERR && maxFd >= 0) {
+            std::set<std::uint16_t> boundPorts;
+            for (TRDP_SOCK_T fd = 0; fd <= maxFd; ++fd) {
+                if (!FD_ISSET(fd, &readFds)) {
+                    continue;
+                }
+
+                sockaddr_storage addr{};
+                socklen_t addrLen = sizeof(addr);
+                if (getsockname(static_cast<int>(fd), reinterpret_cast<sockaddr *>(&addr), &addrLen) != 0) {
+                    continue;
+                }
+
+                if (addr.ss_family == AF_INET) {
+                    const auto *inAddr = reinterpret_cast<const sockaddr_in *>(&addr);
+                    boundPorts.insert(ntohs(inAddr->sin_port));
+                }
+            }
+
+            if (!boundPorts.empty() && (boundPorts.count(port) == 0U || boundPorts.size() != 1U)) {
+                std::cerr << "[TRDP] Requested MD port " << port << ", bound to ";
+                bool first = true;
+                for (auto boundPort : boundPorts) {
+                    if (!first) {
+                        std::cerr << ',' << ' ';
+                    }
+                    std::cerr << boundPort;
+                    first = false;
+                }
+                std::cerr << std::endl;
+            }
+        }
+
         mdSessions.emplace(port, session);
         return true;
     };
