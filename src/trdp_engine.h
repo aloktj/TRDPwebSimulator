@@ -3,6 +3,7 @@
 #include "telegram_model.h"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -161,6 +162,29 @@ class TrdpEngine {
     std::mutex stateMtx;
     std::condition_variable cv;
     std::map<std::uint32_t, EndpointHandle> endpoints;
+
+#ifdef TRDP_STACK_PRESENT
+    using MdSessionKey = std::array<std::uint8_t, sizeof(TRDP_UUID_T)>;
+
+    struct MdRequestState {
+        std::uint32_t comId{0};
+        std::uint32_t expectedReplies{0};
+        std::uint32_t receivedReplies{0};
+        std::chrono::steady_clock::time_point sentAt{};
+        std::chrono::steady_clock::time_point replyDeadline{};
+        std::chrono::steady_clock::time_point confirmDeadline{};
+        bool confirmObserved{false};
+    };
+
+    MdSessionKey mdSessionKeyFromId(const TRDP_UUID_T &sessionId) const;
+    static std::string formatMdSessionKey(const MdSessionKey &key);
+    void trackMdRequest(const MdSessionKey &sessionKey, const EndpointHandle &endpoint);
+    void registerMdReply(const TRDP_MD_INFO_T *pInfo);
+    void pruneMdTimeouts(std::chrono::steady_clock::time_point now);
+
+    std::mutex mdRequestMtx;
+    std::map<MdSessionKey, MdRequestState> mdRequestStates;
+#endif
 
     struct CacheEntry {
         using Payload = std::variant<std::uint32_t, std::string, std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>;

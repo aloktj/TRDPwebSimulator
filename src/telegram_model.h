@@ -76,6 +76,9 @@ struct TelegramDef {
     std::uint16_t srcPort{17224};
     std::uint16_t destPort{17224};
     std::chrono::milliseconds cycle{0};
+    std::uint32_t expectedReplies{0};
+    std::chrono::milliseconds replyTimeout{0};
+    std::chrono::milliseconds confirmTimeout{0};
 };
 
 FieldValue defaultValueForField(const FieldDef &field);
