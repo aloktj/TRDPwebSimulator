@@ -570,6 +570,8 @@ bool TrdpEngine::initialiseTrdpStack() {
 
     std::set<std::uint16_t> pdPorts;
     std::set<std::uint16_t> mdPorts;
+    bool hasPdTelegrams = false;
+    bool hasMdTelegrams = false;
     for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
         const auto addPort = [](std::set<std::uint16_t> &ports, std::uint16_t port) {
             if (port != 0U) {
@@ -577,18 +579,27 @@ bool TrdpEngine::initialiseTrdpStack() {
             }
         };
         if (telegram.type == TelegramType::PD) {
+            hasPdTelegrams = true;
             addPort(pdPorts, telegram.srcPort);
             addPort(pdPorts, telegram.destPort);
         } else {
+            hasMdTelegrams = true;
             addPort(mdPorts, telegram.srcPort);
             addPort(mdPorts, telegram.destPort);
         }
     }
 
-    if (pdPorts.empty()) {
+    if (!hasPdTelegrams) {
+        std::cout << "[TRDP] No PD telegrams configured; skipping PD stack setup" << std::endl;
+    }
+    if (!hasMdTelegrams) {
+        std::cout << "[TRDP] No MD telegrams configured; skipping MD stack setup" << std::endl;
+    }
+
+    if (hasPdTelegrams && pdPorts.empty()) {
         pdPorts.insert(resolveDefaultPort(TelegramType::PD));
     }
-    if (mdPorts.empty()) {
+    if (hasMdTelegrams && mdPorts.empty()) {
         mdPorts.insert(resolveDefaultPort(TelegramType::MD));
     }
 
@@ -679,21 +690,41 @@ bool TrdpEngine::initialiseTrdpStack() {
         openMdSession(port);
     }
 
-    pdSessionInitialised = !pdSessions.empty();
-    mdSessionInitialised = !mdSessions.empty();
+    pdSessionInitialised = hasPdTelegrams && !pdSessions.empty();
+    mdSessionInitialised = hasMdTelegrams && !mdSessions.empty();
 
-    if (!pdSessionInitialised || !mdSessionInitialised) {
-        teardownTrdpStack();
+    const bool pdStackReady = !hasPdTelegrams || pdSessionInitialised;
+    const bool mdStackReady = !hasMdTelegrams || mdSessionInitialised;
+
+    if (!pdStackReady || !mdStackReady) {
+        if (!pdStackReady && hasPdTelegrams) {
+            std::cerr << "[TRDP] PD stack failed to initialise for configured telegrams" << std::endl;
+        }
+        if (!mdStackReady && hasMdTelegrams) {
+            std::cerr << "[TRDP] MD stack failed to initialise for configured telegrams" << std::endl;
+        }
         return false;
     }
 
-    if (config.enableDnr && !initialiseDnr()) {
-        teardownTrdpStack();
-        return false;
+    const bool anySessionInitialised = pdSessionInitialised || mdSessionInitialised;
+
+    if (config.enableDnr) {
+        if (anySessionInitialised) {
+            if (!initialiseDnr()) {
+                teardownTrdpStack();
+                return false;
+            }
+        } else {
+            std::cout << "[TRDP] DNR enabled in config but no TRDP sessions are active; skipping initialisation" << std::endl;
+        }
     }
 
     if (config.ecspConfig.enable) {
-        initialiseEcsp();
+        if (anySessionInitialised) {
+            initialiseEcsp();
+        } else {
+            std::cout << "[TRDP] ECSP enabled in config but no TRDP sessions are active; skipping initialisation" << std::endl;
+        }
     }
 
     // Apply any updated session defaults or interface selections.
@@ -712,8 +743,26 @@ bool TrdpEngine::initialiseTrdpStack() {
     mdSessionInitialised = true;
 #endif
 
-    std::cout << "[TRDP] PD session handle ready" << std::endl;
-    std::cout << "[TRDP] MD session handle ready" << std::endl;
+    if (pdSessionInitialised) {
+        std::cout << "[TRDP] PD session handle ready on ports";
+        for (const auto &[port, session] : pdSessions) {
+            (void)session;
+            std::cout << ' ' << port;
+        }
+        std::cout << std::endl;
+    } else {
+        std::cout << "[TRDP] PD stack inactive" << std::endl;
+    }
+    if (mdSessionInitialised) {
+        std::cout << "[TRDP] MD session handle ready on ports";
+        for (const auto &[port, session] : mdSessions) {
+            (void)session;
+            std::cout << ' ' << port;
+        }
+        std::cout << std::endl;
+    } else {
+        std::cout << "[TRDP] MD stack inactive" << std::endl;
+    }
     return true;
 }
 
