@@ -130,6 +130,9 @@ Json::Value telegramToJson(const TelegramDef &telegram, const std::shared_ptr<Te
     json["dataset"] = telegram.datasetName;
     json["direction"] = telegram.direction == Direction::Tx ? "Tx" : "Rx";
     json["type"] = telegram.type == TelegramType::PD ? "PD" : "MD";
+    json["expectedReplies"] = static_cast<Json::UInt64>(telegram.expectedReplies);
+    json["replyTimeoutMs"] = static_cast<Json::UInt64>(telegram.replyTimeout.count());
+    json["confirmTimeoutMs"] = static_cast<Json::UInt64>(telegram.confirmTimeout.count());
     if (runtime) {
         json["fields"] = fieldsToJson(runtime->snapshotFields());
     }

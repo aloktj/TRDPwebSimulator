@@ -146,6 +146,9 @@ Json::Value TelegramHub::telegramToJson(const TelegramDef &telegram) const {
     json["dataset"] = telegram.datasetName;
     json["direction"] = telegram.direction == Direction::Tx ? "Tx" : "Rx";
     json["type"] = telegram.type == TelegramType::PD ? "PD" : "MD";
+    json["expectedReplies"] = static_cast<Json::UInt64>(telegram.expectedReplies);
+    json["replyTimeoutMs"] = static_cast<Json::UInt64>(telegram.replyTimeout.count());
+    json["confirmTimeoutMs"] = static_cast<Json::UInt64>(telegram.confirmTimeout.count());
     return json;
 }
 

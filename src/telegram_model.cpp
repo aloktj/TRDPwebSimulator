@@ -510,6 +510,16 @@ bool loadFromTauXml(const std::string &xmlPath) {
         if (cycleMs > 0U) {
             telegram.cycle = std::chrono::milliseconds(cycleMs);
         }
+        telegram.expectedReplies =
+            static_cast<std::uint32_t>(parseSizeAttribute(*tgNode, "expectedReplies", telegram.expectedReplies));
+        const auto replyTimeoutMs = parseSizeAttribute(*tgNode, "replyTimeout", 0U);
+        if (replyTimeoutMs > 0U) {
+            telegram.replyTimeout = std::chrono::milliseconds(replyTimeoutMs);
+        }
+        const auto confirmTimeoutMs = parseSizeAttribute(*tgNode, "confirmTimeout", 0U);
+        if (confirmTimeoutMs > 0U) {
+            telegram.confirmTimeout = std::chrono::milliseconds(confirmTimeoutMs);
+        }
 
         try {
             TelegramRegistry::instance().registerTelegram(telegram);
