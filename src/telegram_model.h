@@ -75,6 +75,8 @@ struct TelegramDef {
     std::uint8_t ttl{64};
     std::uint16_t srcPort{17224};
     std::uint16_t destPort{17224};
+    std::uint32_t trdpFlags{0};
+    std::uint8_t qos{0};
     std::chrono::milliseconds cycle{0};
     std::uint32_t expectedReplies{0};
     std::chrono::milliseconds replyTimeout{0};

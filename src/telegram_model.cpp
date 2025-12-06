@@ -506,6 +506,8 @@ bool loadFromTauXml(const std::string &xmlPath) {
         } else if (const auto commonPort = parsePort(*tgNode, "port")) {
             telegram.destPort = *commonPort;
         }
+        telegram.trdpFlags = static_cast<std::uint32_t>(parseSizeAttribute(*tgNode, "flags", telegram.trdpFlags));
+        telegram.qos = static_cast<std::uint8_t>(parseSizeAttribute(*tgNode, "qos", telegram.qos));
         const auto cycleMs = parseSizeAttribute(*tgNode, "cycle", 0U);
         if (cycleMs > 0U) {
             telegram.cycle = std::chrono::milliseconds(cycleMs);

@@ -13,6 +13,7 @@
 #include <iostream>
 #include <optional>
 #include <netinet/in.h>
+#include <set>
 #include <sstream>
 #include <sys/select.h>
 #include <type_traits>
@@ -410,6 +411,71 @@ std::uint16_t resolveDefaultPort(TelegramType type) {
     }
     return kDefaultTrdpPort;
 }
+
+TRDP_APP_SESSION_T TrdpEngine::defaultPdSession() const {
+    if (pdSessions.empty()) {
+        return nullptr;
+    }
+    return pdSessions.begin()->second;
+}
+
+TRDP_APP_SESSION_T TrdpEngine::defaultMdSession() const {
+    if (mdSessions.empty()) {
+        return nullptr;
+    }
+    return mdSessions.begin()->second;
+}
+
+TRDP_APP_SESSION_T TrdpEngine::pdSessionForPort(std::uint16_t port) const {
+    if (auto it = pdSessions.find(port); it != pdSessions.end()) {
+        return it->second;
+    }
+    return defaultPdSession();
+}
+
+TRDP_APP_SESSION_T TrdpEngine::mdSessionForPort(std::uint16_t port) const {
+    if (auto it = mdSessions.find(port); it != mdSessions.end()) {
+        return it->second;
+    }
+    return defaultMdSession();
+}
+
+std::uint16_t TrdpEngine::resolvePortForEndpoint(const TelegramDef &telegram) const {
+    // Prefer the local/source port when transmitting and the destination port when receiving.
+    if (telegram.direction == Direction::Tx && telegram.srcPort != 0U) {
+        return telegram.srcPort;
+    }
+    if (telegram.destPort != 0U) {
+        return telegram.destPort;
+    }
+    return telegram.srcPort;
+}
+
+template <typename T, typename = void> struct has_qos_field : std::false_type {};
+template <typename T> struct has_qos_field<T, std::void_t<decltype(std::declval<T>().qos)>> : std::true_type {};
+
+template <typename T, typename = void> struct has_src_port_field : std::false_type {};
+template <typename T>
+struct has_src_port_field<T, std::void_t<decltype(std::declval<T>().srcPort)>> : std::true_type {};
+
+template <typename T, typename = void> struct has_dest_port_field : std::false_type {};
+template <typename T>
+struct has_dest_port_field<T, std::void_t<decltype(std::declval<T>().destPort)>> : std::true_type {};
+
+template <typename Param> void applyTelegramQos(const TelegramDef &telegram, Param &param) {
+    if constexpr (has_qos_field<Param>::value) {
+        param.qos = telegram.qos;
+    }
+}
+
+template <typename Param> void applyTelegramPorts(const TelegramDef &telegram, Param &param) {
+    if constexpr (has_src_port_field<Param>::value) {
+        param.srcPort = telegram.srcPort;
+    }
+    if constexpr (has_dest_port_field<Param>::value) {
+        param.destPort = telegram.destPort;
+    }
+}
 #endif
 
 void decodeFieldsIntoRuntime(const DatasetDef &dataset, TelegramRuntime &runtime, const std::vector<std::uint8_t> &payload) {
@@ -501,42 +567,84 @@ bool TrdpEngine::initialiseTrdpStack() {
         std::cout << "[TRDP] Binding TRDP sessions to interface IP " << formatIp(sessionIp) << std::endl;
     }
 
-    const UINT16 pdDefaultPort = resolveDefaultPort(TelegramType::PD);
-    TRDP_PD_CONFIG_T pdDefault{};
-    pdDefault.port = pdDefaultPort;
-    pdDefault.sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
-    pdDefault.sendParam.ttl = 64U;
-    pdDefault.flags = TRDP_FLAGS_NONE;
-    pdDefault.timeout = TRDP_PD_DEFAULT_TIMEOUT;
-    pdDefault.toBehavior = TRDP_TO_SET_TO_ZERO;
+    std::set<std::uint16_t> pdPorts;
+    std::set<std::uint16_t> mdPorts;
+    for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
+        const auto addPort = [](std::set<std::uint16_t> &ports, std::uint16_t port) {
+            if (port != 0U) {
+                ports.insert(port);
+            }
+        };
+        if (telegram.type == TelegramType::PD) {
+            addPort(pdPorts, telegram.srcPort);
+            addPort(pdPorts, telegram.destPort);
+        } else {
+            addPort(mdPorts, telegram.srcPort);
+            addPort(mdPorts, telegram.destPort);
+        }
+    }
 
-    TRDP_MD_CONFIG_T mdDefault{};
-    mdDefault.udpPort = resolveDefaultPort(TelegramType::MD);
-    mdDefault.sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
-    mdDefault.sendParam.ttl = 64U;
-    mdDefault.flags = TRDP_FLAGS_NONE;
-    mdDefault.replyTimeout = TRDP_MD_DEFAULT_REPLY_TIMEOUT;
-    mdDefault.confirmTimeout = TRDP_MD_DEFAULT_CONFIRM_TIMEOUT;
-    mdDefault.connectTimeout = TRDP_MD_DEFAULT_CONNECTION_TIMEOUT;
-    mdDefault.sendingTimeout = TRDP_MD_DEFAULT_SENDING_TIMEOUT;
+    if (pdPorts.empty()) {
+        pdPorts.insert(resolveDefaultPort(TelegramType::PD));
+    }
+    if (mdPorts.empty()) {
+        mdPorts.insert(resolveDefaultPort(TelegramType::MD));
+    }
 
-    const TRDP_ERR_T pdErr = tlc_openSession(&pdSession, sessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
-    if (pdErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tlc_openSession for PD failed: " << pdErr << std::endl;
-        tlc_terminate();
+    auto openPdSession = [&](std::uint16_t port) {
+        TRDP_PD_CONFIG_T pdDefault{};
+        pdDefault.port = port;
+        pdDefault.sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
+        pdDefault.sendParam.ttl = 64U;
+        pdDefault.flags = TRDP_FLAGS_NONE;
+        pdDefault.timeout = TRDP_PD_DEFAULT_TIMEOUT;
+        pdDefault.toBehavior = TRDP_TO_SET_TO_ZERO;
+
+        TRDP_APP_SESSION_T session{};
+        const TRDP_ERR_T pdErr = tlc_openSession(&session, sessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
+        if (pdErr != TRDP_NO_ERR) {
+            std::cerr << "[TRDP] tlc_openSession for PD port " << port << " failed: " << pdErr << std::endl;
+            return false;
+        }
+        pdSessions.emplace(port, session);
+        return true;
+    };
+
+    auto openMdSession = [&](std::uint16_t port) {
+        TRDP_MD_CONFIG_T mdDefault{};
+        mdDefault.udpPort = port;
+        mdDefault.sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
+        mdDefault.sendParam.ttl = 64U;
+        mdDefault.flags = TRDP_FLAGS_NONE;
+        mdDefault.replyTimeout = TRDP_MD_DEFAULT_REPLY_TIMEOUT;
+        mdDefault.confirmTimeout = TRDP_MD_DEFAULT_CONFIRM_TIMEOUT;
+        mdDefault.connectTimeout = TRDP_MD_DEFAULT_CONNECTION_TIMEOUT;
+        mdDefault.sendingTimeout = TRDP_MD_DEFAULT_SENDING_TIMEOUT;
+
+        TRDP_APP_SESSION_T session{};
+        const TRDP_ERR_T mdErr = tlc_openSession(&session, sessionIp, 0U, nullptr, nullptr, &mdDefault, nullptr);
+        if (mdErr != TRDP_NO_ERR) {
+            std::cerr << "[TRDP] tlc_openSession for MD port " << port << " failed: " << mdErr << std::endl;
+            return false;
+        }
+        mdSessions.emplace(port, session);
+        return true;
+    };
+
+    for (auto port : pdPorts) {
+        openPdSession(port);
+    }
+    for (auto port : mdPorts) {
+        openMdSession(port);
+    }
+
+    pdSessionInitialised = !pdSessions.empty();
+    mdSessionInitialised = !mdSessions.empty();
+
+    if (!pdSessionInitialised || !mdSessionInitialised) {
+        teardownTrdpStack();
         return false;
     }
-    pdSessionInitialised = true;
-
-    const TRDP_ERR_T mdErr = tlc_openSession(&mdSession, sessionIp, 0U, nullptr, nullptr, &mdDefault, nullptr);
-    if (mdErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tlc_openSession for MD failed: " << mdErr << std::endl;
-        tlc_closeSession(pdSession);
-        pdSessionInitialised = false;
-        tlc_terminate();
-        return false;
-    }
-    mdSessionInitialised = true;
 
     if (config.enableDnr && !initialiseDnr()) {
         teardownTrdpStack();
@@ -548,10 +656,16 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
 
     // Apply any updated session defaults or interface selections.
-    (void)tlc_configSession(pdSession, nullptr, nullptr, nullptr, nullptr);
-    (void)tlc_configSession(mdSession, nullptr, nullptr, nullptr, nullptr);
-    (void)tlc_updateSession(pdSession);
-    (void)tlc_updateSession(mdSession);
+    for (auto &[port, session] : pdSessions) {
+        (void)port;
+        (void)tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
+        (void)tlc_updateSession(session);
+    }
+    for (auto &[port, session] : mdSessions) {
+        (void)port;
+        (void)tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
+        (void)tlc_updateSession(session);
+    }
 #else
     pdSessionInitialised = true;
     mdSessionInitialised = true;
@@ -569,22 +683,26 @@ void TrdpEngine::teardownTrdpStack() {
 
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
-        if (mdSessionInitialised) {
-            tlc_configSession(mdSession, nullptr, nullptr, nullptr, nullptr);
-            (void)tlc_closeSession(mdSession);
+        for (auto &[port, session] : mdSessions) {
+            tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
+            (void)tlc_closeSession(session);
+            (void)port;
         }
-        if (pdSessionInitialised) {
-            tlc_configSession(pdSession, nullptr, nullptr, nullptr, nullptr);
-            (void)tlc_closeSession(pdSession);
+        for (auto &[port, session] : pdSessions) {
+            tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
+            (void)tlc_closeSession(session);
+            (void)port;
         }
         if (dnrInitialised) {
             if constexpr (kDnrCompiledIn) {
-                tau_deInitDnr(pdSessionInitialised ? pdSession : mdSession);
+                tau_deInitDnr(defaultPdSession() ? defaultPdSession() : defaultMdSession());
             }
             dnrInitialised = false;
         }
         tlc_terminate();
         ecspInitialised = false;
+        mdSessions.clear();
+        pdSessions.clear();
 #else
         std::cout << "[TRDP] Stack not available; stub teardown" << std::endl;
 #endif
@@ -619,15 +737,29 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
             return std::nullopt;
         };
 
+        std::optional<std::chrono::milliseconds> minInterval;
         if (pdSessionInitialised) {
-            if (const auto pdInterval = resolveInterval(pdSession)) {
-                return *pdInterval;
+            for (const auto &[port, session] : pdSessions) {
+                (void)port;
+                if (const auto pdInterval = resolveInterval(session)) {
+                    if (!minInterval || *pdInterval < *minInterval) {
+                        minInterval = *pdInterval;
+                    }
+                }
             }
         }
         if (mdSessionInitialised) {
-            if (const auto mdInterval = resolveInterval(mdSession)) {
-                return *mdInterval;
+            for (const auto &[port, session] : mdSessions) {
+                (void)port;
+                if (const auto mdInterval = resolveInterval(session)) {
+                    if (!minInterval || *mdInterval < *minInterval) {
+                        minInterval = *mdInterval;
+                    }
+                }
             }
+        }
+        if (minInterval) {
+            return *minInterval;
         }
 #endif
     }
@@ -734,7 +866,7 @@ bool TrdpEngine::publishPdBuffer(EndpointHandle &endpoint, const std::vector<std
     }
 #ifdef TRDP_STACK_PRESENT
     if (stackAvailable) {
-        TRDP_ERR_T err = tlp_put(pdSession, endpoint.pdPublishHandle, buffer.data(),
+        TRDP_ERR_T err = tlp_put(endpoint.pdSessionHandle, endpoint.pdPublishHandle, buffer.data(),
                                  static_cast<UINT32>(buffer.size()));
         if (err != TRDP_NO_ERR) {
             std::cerr << "[TRDP] tlp_put failed for ComId " << endpoint.def.comId << ": " << err << std::endl;
@@ -756,7 +888,7 @@ bool TrdpEngine::initialiseDnr() {
     if constexpr (kDnrCompiledIn) {
         const char *hostsFile = config.hostsFile.empty() ? nullptr : config.hostsFile.c_str();
 
-        const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+        const TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
         const TRDP_DNR_OPTS_T dnrMode = mapDnrMode(config.dnrMode);
         const TRDP_ERR_T dnrErr = tau_initDnr(session, 0U, 0U, hostsFile, dnrMode, TRUE);
         if (dnrErr != TRDP_NO_ERR) {
@@ -855,30 +987,46 @@ bool TrdpEngine::processStackOnce(
 
         if (topologyCountersDirty) {
             if (pdSessionInitialised) {
-                setTopologyCounters(pdSession);
+                for (const auto &[port, session] : pdSessions) {
+                    (void)port;
+                    setTopologyCounters(session);
+                }
             }
             if (mdSessionInitialised) {
-                setTopologyCounters(mdSession);
+                for (const auto &[port, session] : mdSessions) {
+                    (void)port;
+                    setTopologyCounters(session);
+                }
             }
             topologyCountersDirty = false;
         }
 
         if (pdSessionInitialised) {
-            TRDP_FDS_T pdFds = pdContext ? pdContext->readFds : TRDP_FDS_T{};
-            INT32 pdDesc = pdContext ? pdContext->maxFd : 0;
-            const TRDP_ERR_T pdErr = tlc_process(pdSession, pdContext ? &pdFds : nullptr,
-                                                 pdContext ? &pdDesc : nullptr);
-            if (pdErr != TRDP_NO_ERR) {
-                std::cerr << "[TRDP] tlc_process (PD) failed: " << pdErr << std::endl;
+            bool firstPd = true;
+            for (const auto &[port, session] : pdSessions) {
+                (void)port;
+                const auto *ctx = (firstPd && pdContext) ? pdContext : nullptr;
+                TRDP_FDS_T pdFds = ctx ? ctx->readFds : TRDP_FDS_T{};
+                INT32 pdDesc = ctx ? ctx->maxFd : 0;
+                const TRDP_ERR_T pdErr = tlc_process(session, ctx ? &pdFds : nullptr, ctx ? &pdDesc : nullptr);
+                if (pdErr != TRDP_NO_ERR) {
+                    std::cerr << "[TRDP] tlc_process (PD) failed: " << pdErr << std::endl;
+                }
+                firstPd = false;
             }
         }
         if (mdSessionInitialised) {
-            TRDP_FDS_T mdFds = mdContext ? mdContext->readFds : TRDP_FDS_T{};
-            INT32 mdDesc = mdContext ? mdContext->maxFd : 0;
-            const TRDP_ERR_T mdErr = tlc_process(mdSession, mdContext ? &mdFds : nullptr,
-                                                 mdContext ? &mdDesc : nullptr);
-            if (mdErr != TRDP_NO_ERR) {
-                std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
+            bool firstMd = true;
+            for (const auto &[port, session] : mdSessions) {
+                (void)port;
+                const auto *ctx = (firstMd && mdContext) ? mdContext : nullptr;
+                TRDP_FDS_T mdFds = ctx ? ctx->readFds : TRDP_FDS_T{};
+                INT32 mdDesc = ctx ? ctx->maxFd : 0;
+                const TRDP_ERR_T mdErr = tlc_process(session, ctx ? &mdFds : nullptr, ctx ? &mdDesc : nullptr);
+                if (mdErr != TRDP_NO_ERR) {
+                    std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
+                }
+                firstMd = false;
             }
         }
         if (config.ecspConfig.enable) {
@@ -930,13 +1078,27 @@ void TrdpEngine::buildEndpoints() {
         EndpointHandle handle{.def = telegram, .runtime = runtime, .cycle = telegram.cycle};
 
         if (telegram.type == TelegramType::MD) {
-            handle.mdHandleReady = mdSessionInitialised;
+            handle.mdSessionHandle = mdSessionForPort(resolvePortForEndpoint(telegram));
+            const bool hasRequestedPort = mdSessions.find(resolvePortForEndpoint(telegram)) != mdSessions.end();
+            const std::uint16_t boundPort = hasRequestedPort ? resolvePortForEndpoint(telegram)
+                                                             : (mdSessions.empty() ? 0U : mdSessions.begin()->first);
+            handle.mdHandleReady = mdSessionInitialised && handle.mdSessionHandle != nullptr;
 #ifdef TRDP_STACK_PRESENT
+            std::cout << "[TRDP] MD endpoint selection for ComId " << telegram.comId << " requestedPort="
+                      << resolvePortForEndpoint(telegram) << " boundPort=" << boundPort << " flags=0x" << std::hex
+                      << telegram.trdpFlags << std::dec << " qos=" << static_cast<unsigned>(telegram.qos)
+                      << std::endl;
+            if (boundPort != resolvePortForEndpoint(telegram)) {
+                std::cerr << "[TRDP] MD session port mismatch for ComId " << telegram.comId << " (requested "
+                          << resolvePortForEndpoint(telegram) << ", bound " << boundPort
+                          << ")" << std::endl;
+            }
             if (handle.mdHandleReady && stackAvailable) {
                 TRDP_URI_USER_T emptyUri{};
-                TRDP_ERR_T mdErr = tlm_addListener(mdSession, &handle.mdListenerHandle, this, mdReceiveCallback, TRUE,
-                                                   telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
-                                                   telegram.srcIp, telegram.destIp, 0U, emptyUri, emptyUri);
+                TRDP_ERR_T mdErr =
+                    tlm_addListener(handle.mdSessionHandle, &handle.mdListenerHandle, this, mdReceiveCallback, TRUE,
+                                    telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.srcIp,
+                                    telegram.destIp, 0U, emptyUri, emptyUri);
                 handle.mdHandleReady = (mdErr == TRDP_NO_ERR);
                 if (mdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] tlm_addListener failed for ComId " << telegram.comId << ": " << mdErr
@@ -954,8 +1116,20 @@ void TrdpEngine::buildEndpoints() {
                           << "; see previous errors" << std::endl;
             }
         } else {
-            handle.pdHandleReady = pdSessionInitialised;
+            const auto requestedPort = resolvePortForEndpoint(telegram);
+            const bool hasRequestedPort = pdSessions.find(requestedPort) != pdSessions.end();
+            const std::uint16_t boundPort = hasRequestedPort ? requestedPort
+                                                             : (pdSessions.empty() ? 0U : pdSessions.begin()->first);
+            handle.pdSessionHandle = pdSessionForPort(requestedPort);
+            handle.pdHandleReady = pdSessionInitialised && handle.pdSessionHandle != nullptr;
 #ifdef TRDP_STACK_PRESENT
+            std::cout << "[TRDP] PD endpoint selection for ComId " << telegram.comId << " requestedPort="
+                      << requestedPort << " boundPort=" << boundPort << " flags=0x" << std::hex << telegram.trdpFlags
+                      << std::dec << " qos=" << static_cast<unsigned>(telegram.qos) << std::endl;
+            if (boundPort != requestedPort) {
+                std::cerr << "[TRDP] PD session port mismatch for ComId " << telegram.comId << " (requested "
+                          << requestedPort << ", bound " << boundPort << ")" << std::endl;
+            }
             if (handle.pdHandleReady && stackAvailable) {
                 if (telegram.direction == Direction::Tx && !ipAssignedToLocalInterface(telegram.srcIp)) {
                     std::cerr << "[TRDP] Source IP " << formatIp(telegram.srcIp) << " for ComId " << telegram.comId
@@ -970,21 +1144,25 @@ void TrdpEngine::buildEndpoints() {
                 sendParam.ttl = telegram.ttl;
                 TRDP_COM_PARAM_T recvParams = TRDP_PD_DEFAULT_SEND_PARAM;
                 recvParams.ttl = telegram.ttl;
-                const TRDP_FLAGS_T pdFlags = TRDP_FLAGS_NONE;
+                applyTelegramQos(telegram, sendParam);
+                applyTelegramPorts(telegram, sendParam);
+                applyTelegramQos(telegram, recvParams);
+                applyTelegramPorts(telegram, recvParams);
+                const TRDP_FLAGS_T pdFlags = static_cast<TRDP_FLAGS_T>(telegram.trdpFlags);
                 const auto buffer = runtime->getBufferCopy();
                 TRDP_ERR_T pdErr{};
                 if (telegram.direction == Direction::Tx) {
                     const auto intervalMs = static_cast<UINT32>(telegram.cycle.count());
                     constexpr UINT32 redundancyId = 0U;
-                    pdErr = tlp_publish(pdSession, &handle.pdPublishHandle, this, nullptr, 0U, telegram.comId,
-                                        etbTopoCounter, opTrainTopoCounter, telegram.srcIp, telegram.destIp, intervalMs,
-                                        redundancyId, pdFlags, &sendParam, buffer.data(),
+                    pdErr = tlp_publish(handle.pdSessionHandle, &handle.pdPublishHandle, this, nullptr, 0U,
+                                        telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
+                                        telegram.destIp, intervalMs, redundancyId, pdFlags, &sendParam, buffer.data(),
                                         static_cast<UINT32>(buffer.size()));
                 } else {
                     constexpr UINT32 redundancyId = 0U;
-                    pdErr = tlp_subscribe(pdSession, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
-                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp, redundancyId,
-                                           telegram.destIp, pdFlags, &recvParams, 0U,
+                    pdErr = tlp_subscribe(handle.pdSessionHandle, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
+                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
+                                           redundancyId, telegram.destIp, pdFlags, &recvParams, 0U,
                                            static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
@@ -1132,10 +1310,12 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         if (stackAvailable) {
             TRDP_SEND_PARAM_T sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
             sendParam.ttl = endpoint->def.ttl;
+            applyTelegramQos(endpoint->def, sendParam);
+            applyTelegramPorts(endpoint->def, sendParam);
             const auto numReplies = static_cast<UINT32>(endpoint->def.expectedReplies);
             const auto replyTimeout = static_cast<UINT32>(endpoint->def.replyTimeout.count());
             const auto confirmTimeout = static_cast<UINT32>(endpoint->def.confirmTimeout.count());
-            TRDP_ERR_T err = tlm_request(mdSession, this, mdReceiveCallback, &endpoint->mdSessionId, comId,
+            TRDP_ERR_T err = tlm_request(endpoint->mdSessionHandle, this, mdReceiveCallback, &endpoint->mdSessionId, comId,
                                          etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp, endpoint->def.destIp,
                                          numReplies, replyTimeout, confirmTimeout, &sendParam, buffer.data(),
                                          static_cast<UINT32>(buffer.size()), nullptr, nullptr);
@@ -1206,7 +1386,7 @@ std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool us
         return std::nullopt;
     }
     TRDP_IP_ADDR_T addr{};
-    const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    const TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
     const TRDP_ERR_T err = tau_uri2Addr(session, &addr, uri.c_str());
     if (err != TRDP_NO_ERR) {
         logConfigError("tau_uri2Addr", err);
@@ -1245,7 +1425,7 @@ std::optional<std::string> TrdpEngine::ipToUri(std::uint32_t ipAddr, bool useCac
         return std::nullopt;
     }
     std::array<char, 256> uriBuffer{};
-    const TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    const TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
     const TRDP_ERR_T err = tau_addr2Uri(session, uriBuffer.data(), static_cast<TRDP_IP_ADDR_T>(ipAddr));
     if (err != TRDP_NO_ERR) {
         logConfigError("tau_addr2Uri", err);
@@ -1285,7 +1465,7 @@ std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> TrdpEngin
     if (!pdSessionInitialised && !mdSessionInitialised) {
         return std::nullopt;
     }
-    TRDP_APP_SESSION_T session = pdSessionInitialised ? pdSession : mdSession;
+    TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
     UINT8 tcnVeh{};
     UINT8 tcnCst{};
     UINT8 opCst{};
@@ -1354,8 +1534,8 @@ void TrdpEngine::processingLoop() {
     std::unique_lock lock(stateMtx);
     while (!stopRequested.load()) {
 #ifdef TRDP_STACK_PRESENT
-        const auto pdContext = pdSessionInitialised ? prepareSelectContext(pdSession) : std::nullopt;
-        const auto mdContext = mdSessionInitialised ? prepareSelectContext(mdSession) : std::nullopt;
+        const auto pdContext = pdSessionInitialised ? prepareSelectContext(defaultPdSession()) : std::nullopt;
+        const auto mdContext = mdSessionInitialised ? prepareSelectContext(defaultMdSession()) : std::nullopt;
 #endif
         dispatchCyclicTransmissions(std::chrono::steady_clock::now());
 #ifdef TRDP_STACK_PRESENT

@@ -107,6 +107,8 @@ class TrdpEngine {
         TRDP_SUB_T pdSubscribeHandle{};
         TRDP_LIS_T mdListenerHandle{};
         TRDP_UUID_T mdSessionId{};
+        TRDP_APP_SESSION_T pdSessionHandle{};
+        TRDP_APP_SESSION_T mdSessionHandle{};
 #endif
     };
 
@@ -148,11 +150,16 @@ class TrdpEngine {
     bool mdSessionInitialised{false};
     bool stackAvailable{false};
 #ifdef TRDP_STACK_PRESENT
-    TRDP_APP_SESSION_T pdSession{};
-    TRDP_APP_SESSION_T mdSession{};
+    std::map<std::uint16_t, TRDP_APP_SESSION_T> pdSessions;
+    std::map<std::uint16_t, TRDP_APP_SESSION_T> mdSessions;
     std::vector<UINT8> heapStorage;
     bool dnrInitialised{false};
     bool ecspInitialised{false};
+    TRDP_APP_SESSION_T defaultPdSession() const;
+    TRDP_APP_SESSION_T defaultMdSession() const;
+    TRDP_APP_SESSION_T pdSessionForPort(std::uint16_t port) const;
+    TRDP_APP_SESSION_T mdSessionForPort(std::uint16_t port) const;
+    std::uint16_t resolvePortForEndpoint(const TelegramDef &telegram) const;
 #endif
     std::uint32_t etbTopoCounter{0};
     std::uint32_t opTrainTopoCounter{0};
