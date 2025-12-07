@@ -95,7 +95,6 @@ int main(int argc, char *argv[])
     }
 
     TRDP_SEND_PARAM_T sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
-    sendParam.port = sourcePort;
     sendParam.ttl = 64U;
 
     constexpr UINT32 kRedundancyId = 0U;
