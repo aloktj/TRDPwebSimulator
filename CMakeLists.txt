@@ -180,6 +180,9 @@ if(TRDP_FOUND)
     add_executable(trdp_config_check cmake/tests/trdp_config_check.cpp)
     target_link_libraries(trdp_config_check PRIVATE trdp_link)
     target_compile_definitions(trdp_config_check PRIVATE TRDP_DETECTION_ONLY)
+
+    add_executable(trdp_pd_publish_check cmake/tests/trdp_pd_publish_check.cpp)
+    target_link_libraries(trdp_pd_publish_check PRIVATE trdp_link)
 endif()
 
 add_library(trdp_telegram_model STATIC src/telegram_model.cpp)
