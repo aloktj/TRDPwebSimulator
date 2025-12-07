@@ -140,6 +140,19 @@ if(TRDP_ENABLE_TAU_DNR)
         endif()
         list(REMOVE_DUPLICATES _tau_dnr_include_dirs)
 
+        # Fall back to searching common include locations (and any discovered
+        # target include directories) so the header can still be found if the
+        # imported target does not advertise its include path.
+        find_path(TAU_DNR_INCLUDE_DIR
+            NAMES trdp/api/tau_dnr.h
+            HINTS ${_tau_dnr_include_dirs}
+            PATH_SUFFIXES trdp/api
+        )
+        if(TAU_DNR_INCLUDE_DIR)
+            list(APPEND _tau_dnr_include_dirs ${TAU_DNR_INCLUDE_DIR})
+            list(REMOVE_DUPLICATES _tau_dnr_include_dirs)
+        endif()
+
         if(_tau_dnr_include_dirs)
             set(CMAKE_REQUIRED_INCLUDES ${_tau_dnr_include_dirs})
         endif()
