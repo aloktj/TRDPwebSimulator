@@ -302,56 +302,6 @@ std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
 }
 
 #ifdef TRDP_STACK_PRESENT
-constexpr std::uint16_t kDefaultTrdpPort = 17224;
-
-std::uint16_t resolveDefaultPort(TelegramType type) {
-    for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
-        if (telegram.type == type && telegram.destPort != 0U) {
-            return telegram.destPort;
-        }
-    }
-    return kDefaultTrdpPort;
-}
-
-TRDP_APP_SESSION_T TrdpEngine::defaultPdSession() const {
-    if (pdSessions.empty()) {
-        return nullptr;
-    }
-    return pdSessions.begin()->second;
-}
-
-TRDP_APP_SESSION_T TrdpEngine::defaultMdSession() const {
-    if (mdSessions.empty()) {
-        return nullptr;
-    }
-    return mdSessions.begin()->second;
-}
-
-TRDP_APP_SESSION_T TrdpEngine::pdSessionForPort(std::uint16_t port) const {
-    if (auto it = pdSessions.find(port); it != pdSessions.end()) {
-        return it->second;
-    }
-    return defaultPdSession();
-}
-
-TRDP_APP_SESSION_T TrdpEngine::mdSessionForPort(std::uint16_t port) const {
-    if (auto it = mdSessions.find(port); it != mdSessions.end()) {
-        return it->second;
-    }
-    return defaultMdSession();
-}
-
-std::uint16_t TrdpEngine::resolvePortForEndpoint(const TelegramDef &telegram) const {
-    // Prefer the local/source port when transmitting and the destination port when receiving.
-    if (telegram.direction == Direction::Tx && telegram.srcPort != 0U) {
-        return telegram.srcPort;
-    }
-    if (telegram.destPort != 0U) {
-        return telegram.destPort;
-    }
-    return telegram.srcPort;
-}
-
 template <typename T, typename = void> struct has_qos_field : std::false_type {};
 template <typename T> struct has_qos_field<T, std::void_t<decltype(std::declval<T>().qos)>> : std::true_type {};
 
@@ -409,6 +359,56 @@ static TRDP_DNR_OPTS_T mapDnrMode(TrdpEngine::DnrMode mode) {
 } // namespace
 
 #ifdef TRDP_STACK_PRESENT
+constexpr std::uint16_t kDefaultTrdpPort = 17224;
+
+std::uint16_t resolveDefaultPort(TelegramType type) {
+    for (const auto &telegram : TelegramRegistry::instance().listTelegrams()) {
+        if (telegram.type == type && telegram.destPort != 0U) {
+            return telegram.destPort;
+        }
+    }
+    return kDefaultTrdpPort;
+}
+
+TRDP_APP_SESSION_T TrdpEngine::defaultPdSession() const {
+    if (pdSessions.empty()) {
+        return nullptr;
+    }
+    return pdSessions.begin()->second;
+}
+
+TRDP_APP_SESSION_T TrdpEngine::defaultMdSession() const {
+    if (mdSessions.empty()) {
+        return nullptr;
+    }
+    return mdSessions.begin()->second;
+}
+
+TRDP_APP_SESSION_T TrdpEngine::pdSessionForPort(std::uint16_t port) const {
+    if (auto it = pdSessions.find(port); it != pdSessions.end()) {
+        return it->second;
+    }
+    return defaultPdSession();
+}
+
+TRDP_APP_SESSION_T TrdpEngine::mdSessionForPort(std::uint16_t port) const {
+    if (auto it = mdSessions.find(port); it != mdSessions.end()) {
+        return it->second;
+    }
+    return defaultMdSession();
+}
+
+std::uint16_t TrdpEngine::resolvePortForEndpoint(const TelegramDef &telegram) const {
+    // Prefer the local/source port when transmitting and the destination port when receiving.
+    if (telegram.direction == Direction::Tx && telegram.srcPort != 0U) {
+        return telegram.srcPort;
+    }
+    if (telegram.destPort != 0U) {
+        return telegram.destPort;
+    }
+    return telegram.srcPort;
+}
+
 std::string TrdpEngine::formatMdSessionKey(const MdSessionKey &key) {
     std::ostringstream oss;
     oss << std::hex << std::setfill('0');
