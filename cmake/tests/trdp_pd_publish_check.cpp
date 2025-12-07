@@ -37,6 +37,8 @@ std::string formatError(TRDP_ERR_T err)
         return "TRDP_SOCK_ERR";
     case TRDP_TIMEOUT_ERR:
         return "TRDP_TIMEOUT_ERR";
+    case TRDP_MEM_ERR:
+        return "TRDP_MEM_ERR";
     default:
         return "TRDP error code " + std::to_string(static_cast<int>(err));
     }
@@ -64,7 +66,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    constexpr std::size_t kHeapSize = 16 * 1024;
+    /*
+     * Use the same heap size as the simulator stack initialisation to avoid
+     * TRDP_MEM_ERR (-8) from tlc_openSession when the heap is too small for
+     * default PD configuration structures.
+     */
+    constexpr std::size_t kHeapSize = 64 * 1024;
     std::array<UINT8, kHeapSize> heap{};
     TRDP_MEM_CONFIG_T memConfig{};
     memConfig.p = heap.data();
