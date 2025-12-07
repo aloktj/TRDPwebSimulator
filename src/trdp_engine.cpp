@@ -972,7 +972,7 @@ bool TrdpEngine::publishPdBuffer(EndpointHandle &endpoint, const std::vector<std
 }
 
 bool TrdpEngine::initialiseDnr() {
-#ifdef TRDP_STACK_PRESENT
+#if defined(TRDP_STACK_PRESENT) && TRDP_HAS_TAU_DNR
     if constexpr (!kDnrCompiledIn) {
         logDnrUnavailable("TAU DNR APIs not available in detected stack; host lookups are disabled");
         return true;
@@ -994,6 +994,12 @@ bool TrdpEngine::initialiseDnr() {
             std::cout << " (hosts file: " << hostsFile << ")";
         }
         std::cout << std::endl;
+    }
+#else
+    if (!kDnrCompiledIn) {
+        logDnrUnavailable("TAU DNR APIs not available in detected stack; host lookups are disabled");
+    } else {
+        logDnrUnavailable("TRDP stack not present in this build; host lookups are disabled");
     }
 #endif
     return true;
