@@ -1239,6 +1239,13 @@ void TrdpEngine::buildEndpoints() {
                 }
             }
             if (handle.pdHandleReady && stackAvailable) {
+                auto destIp = telegram.destIp;
+                if (telegram.direction == Direction::Rx && destIp != 0U && !ipAssignedToLocalInterface(destIp)) {
+                    std::cerr << "[TRDP] Destination IP " << formatIp(destIp) << " for ComId " << telegram.comId
+                              << " is not configured on this host; subscribing with a wildcard address."
+                              << std::endl;
+                    destIp = 0U;
+                }
                 TRDP_SEND_PARAM_T sendParam = TRDP_PD_DEFAULT_SEND_PARAM;
                 sendParam.ttl = telegram.ttl;
                 TRDP_COM_PARAM_T recvParams = TRDP_PD_DEFAULT_SEND_PARAM;
@@ -1261,7 +1268,7 @@ void TrdpEngine::buildEndpoints() {
                     constexpr UINT32 redundancyId = 0U;
                     pdErr = tlp_subscribe(handle.pdSessionHandle, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
                                            telegram.comId, etbTopoCounter, opTrainTopoCounter, telegram.srcIp,
-                                           redundancyId, telegram.destIp, pdFlags, &recvParams, 0U,
+                                           redundancyId, destIp, pdFlags, &recvParams, 0U,
                                            static_cast<TRDP_TO_BEHAVIOR_T>(0U));
                 }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
