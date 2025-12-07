@@ -73,106 +73,6 @@ std::chrono::milliseconds toDuration(const TRDP_TIME_T &time) {
     return std::chrono::milliseconds(time.tv_usec / 1000 + time.tv_sec * 1000);
 }
 
-std::string TrdpEngine::formatMdSessionKey(const MdSessionKey &key) {
-    std::ostringstream oss;
-    oss << std::hex << std::setfill('0');
-    for (std::size_t i = 0; i < key.size(); ++i) {
-        if (i > 0 && i % 2 == 0) {
-            oss << ':';
-        }
-        oss << std::setw(2) << static_cast<unsigned int>(key[i]);
-    }
-    return oss.str();
-}
-
-TrdpEngine::MdSessionKey TrdpEngine::mdSessionKeyFromId(const TRDP_UUID_T &sessionId) const {
-    MdSessionKey key{};
-    static_assert(sizeof(sessionId) == sizeof(MdSessionKey), "Unexpected TRDP_UUID_T size");
-    std::memcpy(key.data(), &sessionId, key.size());
-    return key;
-}
-
-void TrdpEngine::trackMdRequest(const MdSessionKey &sessionKey, const EndpointHandle &endpoint) {
-    if (endpoint.def.expectedReplies == 0 && endpoint.def.confirmTimeout.count() == 0) {
-        return;
-    }
-
-    MdRequestState state{};
-    state.comId = endpoint.def.comId;
-    state.expectedReplies = endpoint.def.expectedReplies;
-    state.sentAt = std::chrono::steady_clock::now();
-    state.confirmObserved = endpoint.def.confirmTimeout.count() == 0;
-
-    if (endpoint.def.replyTimeout.count() > 0) {
-        state.replyDeadline = state.sentAt + endpoint.def.replyTimeout;
-    }
-    if (endpoint.def.confirmTimeout.count() > 0) {
-        state.confirmDeadline = state.sentAt + endpoint.def.confirmTimeout;
-    }
-
-    std::lock_guard lock(mdRequestMtx);
-    mdRequestStates[sessionKey] = state;
-}
-
-void TrdpEngine::registerMdReply(const TRDP_MD_INFO_T *pInfo) {
-    const auto sessionKey = mdSessionKeyFromId(pInfo->sessionId);
-    std::lock_guard lock(mdRequestMtx);
-    auto it = mdRequestStates.find(sessionKey);
-    if (it == mdRequestStates.end()) {
-        return;
-    }
-
-    auto &state = it->second;
-    state.confirmObserved = true;
-    if (state.expectedReplies > 0) {
-        ++state.receivedReplies;
-    }
-
-    const bool repliesSatisfied = state.expectedReplies == 0 || state.receivedReplies >= state.expectedReplies;
-    const bool confirmSatisfied = state.confirmObserved || state.confirmDeadline.time_since_epoch().count() == 0;
-
-    if (repliesSatisfied && confirmSatisfied) {
-        std::cout << "[TRDP] MD session " << formatMdSessionKey(sessionKey) << " received all expected replies ("
-                  << state.receivedReplies << ") for ComId " << state.comId << std::endl;
-        mdRequestStates.erase(it);
-    }
-}
-
-void TrdpEngine::pruneMdTimeouts(std::chrono::steady_clock::time_point now) {
-    std::lock_guard lock(mdRequestMtx);
-    for (auto it = mdRequestStates.begin(); it != mdRequestStates.end();) {
-        const auto &state = it->second;
-        const bool replyExpired = state.expectedReplies > state.receivedReplies &&
-                                  state.replyDeadline.time_since_epoch().count() > 0 && now >= state.replyDeadline;
-        const bool confirmExpired = !state.confirmObserved &&
-                                    state.confirmDeadline.time_since_epoch().count() > 0 &&
-                                    now >= state.confirmDeadline;
-
-        if (replyExpired || confirmExpired) {
-            std::cerr << "[TRDP] MD session " << formatMdSessionKey(it->first) << " for ComId " << state.comId;
-            if (replyExpired) {
-                const auto missing = state.expectedReplies > state.receivedReplies
-                                         ? state.expectedReplies - state.receivedReplies
-                                         : 0U;
-                std::cerr << " missing " << missing << " reply(ies) before timeout";
-            }
-            if (confirmExpired) {
-                std::cerr << (replyExpired ? "; " : " ") << "confirm not received before timeout";
-            }
-            std::cerr << std::endl;
-            it = mdRequestStates.erase(it);
-            continue;
-        }
-
-        const bool repliesSatisfied = state.expectedReplies == 0 || state.receivedReplies >= state.expectedReplies;
-        const bool confirmSatisfied = state.confirmObserved || state.confirmDeadline.time_since_epoch().count() == 0;
-        if (repliesSatisfied && confirmSatisfied) {
-            it = mdRequestStates.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
 #endif
 
 template <typename T> void writeLe(std::uint8_t *dest, T value) { std::memcpy(dest, &value, sizeof(T)); }
@@ -507,6 +407,109 @@ static TRDP_DNR_OPTS_T mapDnrMode(TrdpEngine::DnrMode mode) {
 #endif
 
 } // namespace
+
+#ifdef TRDP_STACK_PRESENT
+std::string TrdpEngine::formatMdSessionKey(const MdSessionKey &key) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (std::size_t i = 0; i < key.size(); ++i) {
+        if (i > 0 && i % 2 == 0) {
+            oss << ':';
+        }
+        oss << std::setw(2) << static_cast<unsigned int>(key[i]);
+    }
+    return oss.str();
+}
+
+TrdpEngine::MdSessionKey TrdpEngine::mdSessionKeyFromId(const TRDP_UUID_T &sessionId) const {
+    MdSessionKey key{};
+    static_assert(sizeof(sessionId) == sizeof(MdSessionKey), "Unexpected TRDP_UUID_T size");
+    std::memcpy(key.data(), &sessionId, key.size());
+    return key;
+}
+
+void TrdpEngine::trackMdRequest(const MdSessionKey &sessionKey, const EndpointHandle &endpoint) {
+    if (endpoint.def.expectedReplies == 0 && endpoint.def.confirmTimeout.count() == 0) {
+        return;
+    }
+
+    MdRequestState state{};
+    state.comId = endpoint.def.comId;
+    state.expectedReplies = endpoint.def.expectedReplies;
+    state.sentAt = std::chrono::steady_clock::now();
+    state.confirmObserved = endpoint.def.confirmTimeout.count() == 0;
+
+    if (endpoint.def.replyTimeout.count() > 0) {
+        state.replyDeadline = state.sentAt + endpoint.def.replyTimeout;
+    }
+    if (endpoint.def.confirmTimeout.count() > 0) {
+        state.confirmDeadline = state.sentAt + endpoint.def.confirmTimeout;
+    }
+
+    std::lock_guard lock(mdRequestMtx);
+    mdRequestStates[sessionKey] = state;
+}
+
+void TrdpEngine::registerMdReply(const TRDP_MD_INFO_T *pInfo) {
+    const auto sessionKey = mdSessionKeyFromId(pInfo->sessionId);
+    std::lock_guard lock(mdRequestMtx);
+    auto it = mdRequestStates.find(sessionKey);
+    if (it == mdRequestStates.end()) {
+        return;
+    }
+
+    auto &state = it->second;
+    state.confirmObserved = true;
+    if (state.expectedReplies > 0) {
+        ++state.receivedReplies;
+    }
+
+    const bool repliesSatisfied = state.expectedReplies == 0 || state.receivedReplies >= state.expectedReplies;
+    const bool confirmSatisfied = state.confirmObserved || state.confirmDeadline.time_since_epoch().count() == 0;
+
+    if (repliesSatisfied && confirmSatisfied) {
+        std::cout << "[TRDP] MD session " << formatMdSessionKey(sessionKey) << " received all expected replies ("
+                  << state.receivedReplies << ") for ComId " << state.comId << std::endl;
+        mdRequestStates.erase(it);
+    }
+}
+
+void TrdpEngine::pruneMdTimeouts(std::chrono::steady_clock::time_point now) {
+    std::lock_guard lock(mdRequestMtx);
+    for (auto it = mdRequestStates.begin(); it != mdRequestStates.end();) {
+        const auto &state = it->second;
+        const bool replyExpired = state.expectedReplies > state.receivedReplies &&
+                                  state.replyDeadline.time_since_epoch().count() > 0 && now >= state.replyDeadline;
+        const bool confirmExpired = !state.confirmObserved &&
+                                    state.confirmDeadline.time_since_epoch().count() > 0 &&
+                                    now >= state.confirmDeadline;
+
+        if (replyExpired || confirmExpired) {
+            std::cerr << "[TRDP] MD session " << formatMdSessionKey(it->first) << " for ComId " << state.comId;
+            if (replyExpired) {
+                const auto missing = state.expectedReplies > state.receivedReplies
+                                         ? state.expectedReplies - state.receivedReplies
+                                         : 0U;
+                std::cerr << " missing " << missing << " reply(ies) before timeout";
+            }
+            if (confirmExpired) {
+                std::cerr << (replyExpired ? "; " : " ") << "confirm not received before timeout";
+            }
+            std::cerr << std::endl;
+            it = mdRequestStates.erase(it);
+            continue;
+        }
+
+        const bool repliesSatisfied = state.expectedReplies == 0 || state.receivedReplies >= state.expectedReplies;
+        const bool confirmSatisfied = state.confirmObserved || state.confirmDeadline.time_since_epoch().count() == 0;
+        if (repliesSatisfied && confirmSatisfied) {
+            it = mdRequestStates.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+#endif
 
 TrdpEngine &TrdpEngine::instance() {
     static TrdpEngine engine;

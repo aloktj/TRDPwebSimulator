@@ -193,6 +193,11 @@ class TrdpEngine {
     std::map<MdSessionKey, MdRequestState> mdRequestStates;
 #endif
 
+#ifdef TRDP_STACK_PRESENT
+    friend void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T session, const TRDP_MD_INFO_T *pInfo, UINT8 *pData,
+                                  UINT32 dataSize);
+#endif
+
     struct CacheEntry {
         using Payload = std::variant<std::uint32_t, std::string, std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>;
 
