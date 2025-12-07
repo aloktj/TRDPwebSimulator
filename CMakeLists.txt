@@ -123,9 +123,38 @@ set(TRDP_HAS_TAU_DNR 0)
 if(TRDP_ENABLE_TAU_DNR)
     if(TAU_FOUND AND TAU_LINK_TARGET)
         include(CheckCXXSymbolExists)
-        get_target_property(TAU_INCLUDE_DIRS ${TAU_LINK_TARGET} INTERFACE_INCLUDE_DIRECTORIES)
-        if(TAU_INCLUDE_DIRS)
-            set(CMAKE_REQUIRED_INCLUDES ${TAU_INCLUDE_DIRS})
+
+        # Some upstream TAU targets do not publish their include directories, but the
+        # TRDP targets do. Gather the include hints from both so the tau_dnr header
+        # can be located when using the CPack-generated TRDP package.
+        set(_tau_dnr_include_dirs)
+        get_target_property(_tau_include_prop ${TAU_LINK_TARGET} INTERFACE_INCLUDE_DIRECTORIES)
+        if(_tau_include_prop AND NOT _tau_include_prop STREQUAL "NOTFOUND")
+            list(APPEND _tau_dnr_include_dirs ${_tau_include_prop})
+        endif()
+        if(TARGET TRDP::trdp)
+            get_target_property(_trdp_include_prop TRDP::trdp INTERFACE_INCLUDE_DIRECTORIES)
+            if(_trdp_include_prop AND NOT _trdp_include_prop STREQUAL "NOTFOUND")
+                list(APPEND _tau_dnr_include_dirs ${_trdp_include_prop})
+            endif()
+        endif()
+        list(REMOVE_DUPLICATES _tau_dnr_include_dirs)
+
+        # Fall back to searching common include locations (and any discovered
+        # target include directories) so the header can still be found if the
+        # imported target does not advertise its include path.
+        find_path(TAU_DNR_INCLUDE_DIR
+            NAMES trdp/api/tau_dnr.h
+            HINTS ${_tau_dnr_include_dirs}
+            PATH_SUFFIXES trdp/api
+        )
+        if(TAU_DNR_INCLUDE_DIR)
+            list(APPEND _tau_dnr_include_dirs ${TAU_DNR_INCLUDE_DIR})
+            list(REMOVE_DUPLICATES _tau_dnr_include_dirs)
+        endif()
+
+        if(_tau_dnr_include_dirs)
+            set(CMAKE_REQUIRED_INCLUDES ${_tau_dnr_include_dirs})
         endif()
         set(CMAKE_REQUIRED_LIBRARIES ${TAU_LINK_TARGET})
         check_cxx_symbol_exists(tau_initDnr "trdp/api/tau_dnr.h" TRDP_HAS_TAU_DNR)
