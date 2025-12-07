@@ -1,16 +1,28 @@
 #include <trdp/api/trdp_if_light.h>
 
-#include <arpa/inet.h>
-
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <ifaddrs.h>
 #include <iostream>
+#include <arpa/inet.h>
 #include <string>
 #include <vector>
 
 namespace {
+std::string formatIp(std::uint32_t ip)
+{
+    in_addr addr{};
+    addr.s_addr = htonl(ip);
+    char buffer[INET_ADDRSTRLEN] = {0};
+    if (inet_ntop(AF_INET, &addr, buffer, sizeof(buffer)) == nullptr)
+    {
+        return "<invalid IPv4>";
+    }
+    return buffer;
+}
+
 std::uint32_t parseIp(const std::string &text)
 {
     in_addr addr{};
@@ -19,6 +31,38 @@ std::uint32_t parseIp(const std::string &text)
         return 0U;
     }
     return ntohl(addr.s_addr);
+}
+
+bool ipAssignedToLocalInterface(std::uint32_t ip)
+{
+    if (ip == 0U)
+    {
+        return true;
+    }
+
+    ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || ifaddr == nullptr)
+    {
+        return false;
+    }
+
+    bool found = false;
+    for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+    {
+        if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET)
+        {
+            continue;
+        }
+        const auto *addr = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
+        if (static_cast<std::uint32_t>(ntohl(addr->sin_addr.s_addr)) == ip)
+        {
+            found = true;
+            break;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return found;
 }
 
 std::string formatError(TRDP_ERR_T err)
@@ -63,6 +107,14 @@ int main(int argc, char *argv[])
     if (sourceIp == 0U || destIp == 0U)
     {
         std::cerr << "Invalid IPv4 argument; ensure dotted-quad notation is used." << std::endl;
+        return 1;
+    }
+
+    if (!ipAssignedToLocalInterface(sourceIp))
+    {
+        std::cerr << "Source IP " << formatIp(sourceIp)
+                  << " is not configured on this host. Choose a local interface address or set TRDP_TX_IFACE."
+                  << std::endl;
         return 1;
     }
 
