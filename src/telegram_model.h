@@ -76,7 +76,9 @@ struct TelegramDef {
     std::uint16_t srcPort{17224};
     std::uint16_t destPort{17224};
     std::uint32_t trdpFlags{0};
-    std::uint8_t qos{0};
+    // Use TRDP defaults unless explicitly overridden by the XML. A QoS of 0
+    // causes tlp_publish to fail with TRDP_PARAM_ERR on some stacks.
+    std::uint8_t qos{5};
     std::chrono::milliseconds cycle{0};
     std::uint32_t expectedReplies{0};
     std::chrono::milliseconds replyTimeout{0};
