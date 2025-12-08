@@ -216,6 +216,8 @@ void TelegramController::updateFields(const drogon::HttpRequestPtr &req,
         runtime->setFieldValue(memberName, parsed.value());
     }
 
+    runtime->overwriteBuffer(encodeFieldsToBuffer(*runtime, runtime->snapshotFields()));
+
     callback(drogon::HttpResponse::newHttpJsonResponse(fieldsToJson(runtime->snapshotFields())));
 }
 
