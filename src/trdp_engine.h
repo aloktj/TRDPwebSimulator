@@ -149,6 +149,7 @@ class TrdpEngine {
     bool pdSessionInitialised{false};
     bool mdSessionInitialised{false};
     bool stackAvailable{false};
+    std::uint32_t resolvedSessionIp{0};
 #ifdef TRDP_STACK_PRESENT
     std::map<std::uint16_t, TRDP_APP_SESSION_T> pdSessions;
     std::map<std::uint16_t, TRDP_APP_SESSION_T> mdSessions;
