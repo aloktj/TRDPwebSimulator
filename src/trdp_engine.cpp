@@ -298,6 +298,10 @@ std::string describeTrdpError(TRDP_ERR_T err) {
         return std::string{"TRDP error code "} + std::to_string(err);
     }
 }
+
+void logTrdpError(const std::string &context, TRDP_ERR_T err) {
+    std::cerr << "[TRDP] " << context << " failed: " << describeTrdpError(err) << " (" << err << ")" << std::endl;
+}
 #endif
 
 std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
@@ -547,7 +551,11 @@ bool TrdpEngine::initialiseTrdpStack() {
 
     const TRDP_ERR_T initErr = tlc_init(nullptr, nullptr, &memConfig);
     if (initErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tlc_init failed: " << initErr << std::endl;
+        logTrdpError("tlc_init", initErr);
+        if (initErr == TRDP_PARAM_ERR) {
+            std::cerr << "[TRDP] Hint: verify TRDP/TAU packages are installed and compatible with the simulator build; "
+                      << "parameter errors often indicate a version or configuration mismatch." << std::endl;
+        }
         return false;
     }
 
@@ -645,7 +653,7 @@ bool TrdpEngine::initialiseTrdpStack() {
         TRDP_APP_SESSION_T session{};
         const TRDP_ERR_T pdErr = tlc_openSession(&session, trdpSessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
         if (pdErr != TRDP_NO_ERR) {
-            std::cerr << "[TRDP] tlc_openSession for PD port " << port << " failed: " << pdErr << std::endl;
+            logTrdpError("tlc_openSession for PD port " + std::to_string(port), pdErr);
             return false;
         }
         pdSessions.emplace(port, session);
@@ -669,7 +677,7 @@ bool TrdpEngine::initialiseTrdpStack() {
         TRDP_APP_SESSION_T session{};
         const TRDP_ERR_T mdErr = tlc_openSession(&session, trdpSessionIp, 0U, nullptr, nullptr, &mdDefault, nullptr);
         if (mdErr != TRDP_NO_ERR) {
-            std::cerr << "[TRDP] tlc_openSession for MD port " << port << " failed: " << mdErr << std::endl;
+            logTrdpError("tlc_openSession for MD port " + std::to_string(port), mdErr);
             return false;
         }
 
