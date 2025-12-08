@@ -1345,23 +1345,23 @@ void TrdpEngine::buildEndpoints() {
                 applyTelegramPorts(telegram, sendParam);
                 applyTelegramQos(telegram, recvParams);
                 applyTelegramPorts(telegram, recvParams);
-                const TRDP_FLAGS_T pdFlags = static_cast<TRDP_FLAGS_T>(telegram.trdpFlags);
-                const auto buffer = runtime->getBufferCopy();
-                TRDP_ERR_T pdErr{};
-                if (telegram.direction == Direction::Tx) {
-                    const auto intervalMs = static_cast<UINT32>(telegram.cycle.count());
-                    constexpr UINT32 redundancyId = 0U;
-                    pdErr = tlp_publish(handle.pdSessionHandle, &handle.pdPublishHandle, this, nullptr, 0U,
-                                        telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp, trdpDestIp,
-                                        intervalMs, redundancyId, pdFlags, &sendParam, buffer.data(),
-                                        static_cast<UINT32>(buffer.size()));
-                } else {
-                    constexpr UINT32 redundancyId = 0U;
-                    pdErr = tlp_subscribe(handle.pdSessionHandle, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
-                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp,
-                                           redundancyId, trdpDestIp, pdFlags, &recvParams, 0U,
-                                           static_cast<TRDP_TO_BEHAVIOR_T>(0U));
-                }
+                  const TRDP_FLAGS_T pdFlags = static_cast<TRDP_FLAGS_T>(telegram.trdpFlags);
+                  const auto buffer = runtime->getBufferCopy();
+                  TRDP_ERR_T pdErr{};
+                  if (telegram.direction == Direction::Tx) {
+                      const auto intervalUs = static_cast<UINT32>(
+                          std::chrono::duration_cast<std::chrono::microseconds>(telegram.cycle).count());
+                      constexpr UINT32 redundancyId = 0U;
+                      pdErr = tlp_publish(handle.pdSessionHandle, &handle.pdPublishHandle, this, nullptr, 0U,
+                                          telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp, trdpDestIp,
+                                          intervalUs, redundancyId, pdFlags, &sendParam, buffer.data(),
+                                          static_cast<UINT32>(buffer.size()));
+                  } else {
+                      constexpr UINT32 redundancyId = 0U;
+                      pdErr = tlp_subscribe(handle.pdSessionHandle, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
+                                             telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp, trdpSrcIp,
+                                             trdpDestIp, pdFlags, &recvParams, 0U, static_cast<TRDP_TO_BEHAVIOR_T>(0U));
+                  }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": "

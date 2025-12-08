@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
     const auto sourceIp = parseIp(argv[2]);
     const auto destIp = parseIp(argv[3]);
     const std::uint16_t sourcePort = static_cast<std::uint16_t>(argc > 4 ? std::stoul(argv[4]) : 17224U);
-    const UINT32 intervalMs = static_cast<UINT32>(argc > 5 ? std::stoul(argv[5]) : 1000U);
+    const UINT32 intervalUs = static_cast<UINT32>((argc > 5 ? std::stoul(argv[5]) : 1000U) * 1000U);
 
     if (sourceIp == 0U || destIp == 0U)
     {
@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
 
     TRDP_PUB_T pub{};
     const TRDP_ERR_T publishErr = tlp_publish(session, &pub, nullptr, nullptr, 0U, comId, 0U, 0U, sourceIp, destIp,
-                                              intervalMs, kRedundancyId, pdFlags, &sendParam, payload.data(),
+                                              intervalUs, kRedundancyId, pdFlags, &sendParam, payload.data(),
                                               static_cast<UINT32>(payload.size()));
 
     if (publishErr != TRDP_NO_ERR)
