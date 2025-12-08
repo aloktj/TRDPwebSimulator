@@ -1561,6 +1561,18 @@ bool TrdpEngine::stopTxTelegram(std::uint32_t comId) {
     return true;
 }
 
+std::optional<bool> TrdpEngine::txPublishActive(std::uint32_t comId) {
+    std::lock_guard lock(stateMtx);
+    auto *endpoint = findEndpoint(comId);
+    if (endpoint == nullptr) {
+        return std::nullopt;
+    }
+    if (endpoint->def.direction != Direction::Tx || endpoint->def.type != TelegramType::PD) {
+        return std::nullopt;
+    }
+    return endpoint->txCyclicActive;
+}
+
 void TrdpEngine::handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload) {
     auto *endpoint = findEndpoint(comId);
     if (endpoint == nullptr) {

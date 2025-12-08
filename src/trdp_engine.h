@@ -80,6 +80,9 @@ class TrdpEngine {
     // Stop cyclic publishing for a TX PD telegram.
     bool stopTxTelegram(std::uint32_t comId);
 
+    // Report whether cyclic publishing is active for a TX PD telegram. Returns nullopt for non-TX/PD endpoints.
+    std::optional<bool> txPublishActive(std::uint32_t comId);
+
     // Feed a freshly received PD telegram into the registry/runtime.
     void handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
 
@@ -91,6 +94,10 @@ class TrdpEngine {
     std::optional<std::string> ipToUri(std::uint32_t ipAddr, bool useCache = true);
     std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> labelToIds(const std::string &label,
                                                                                       bool useCache = true);
+
+    // Encode a set of fields into a TX buffer using the dataset layout in the provided runtime.
+    std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
+                                                   const std::map<std::string, FieldValue> &fields);
 
   private:
     TrdpEngine() = default;

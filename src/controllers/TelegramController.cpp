@@ -133,6 +133,9 @@ Json::Value telegramToJson(const TelegramDef &telegram, const std::shared_ptr<Te
     json["expectedReplies"] = static_cast<Json::UInt64>(telegram.expectedReplies);
     json["replyTimeoutMs"] = static_cast<Json::UInt64>(telegram.replyTimeout.count());
     json["confirmTimeoutMs"] = static_cast<Json::UInt64>(telegram.confirmTimeout.count());
+    if (telegram.direction == Direction::Tx && telegram.type == TelegramType::PD) {
+        json["txActive"] = TrdpEngine::instance().txPublishActive(telegram.comId).value_or(false);
+    }
     if (runtime) {
         json["fields"] = fieldsToJson(runtime->snapshotFields());
     }
@@ -213,6 +216,8 @@ void TelegramController::updateFields(const drogon::HttpRequestPtr &req,
         runtime->setFieldValue(memberName, parsed.value());
     }
 
+    runtime->overwriteBuffer(encodeFieldsToBuffer(*runtime, runtime->snapshotFields()));
+
     callback(drogon::HttpResponse::newHttpJsonResponse(fieldsToJson(runtime->snapshotFields())));
 }
 
@@ -264,6 +269,9 @@ void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
     const bool success = TrdpEngine::instance().sendTxTelegram(comId, overrides);
     auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
     (*resp->getJsonObject())["ok"] = success;
+    if (telegram->direction == Direction::Tx && telegram->type == TelegramType::PD) {
+        (*resp->getJsonObject())["txActive"] = TrdpEngine::instance().txPublishActive(comId).value_or(false);
+    }
     if (!success) {
         resp->setStatusCode(drogon::k500InternalServerError);
     }
@@ -298,6 +306,9 @@ void TelegramController::stopTelegram(const drogon::HttpRequestPtr &,
 
     const bool success = TrdpEngine::instance().stopTxTelegram(comId);
     (*resp->getJsonObject())["ok"] = success;
+    if (telegram->direction == Direction::Tx && telegram->type == TelegramType::PD) {
+        (*resp->getJsonObject())["txActive"] = TrdpEngine::instance().txPublishActive(comId).value_or(false);
+    }
     if (!success) {
         resp->setStatusCode(drogon::k400BadRequest);
     }
