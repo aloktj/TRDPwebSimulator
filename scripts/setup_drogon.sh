@@ -10,11 +10,14 @@ sudo apt install -y git cmake g++ uuid-dev openssl libssl-dev \
 
 if [ ! -d /tmp/drogon ]; then
   echo "[setup_drogon] Cloning Drogon..."
-  git clone https://github.com/drogonframework/drogon.git /tmp/drogon
+  git clone --recursive https://github.com/drogonframework/drogon.git /tmp/drogon
 else
   echo "[setup_drogon] Drogon source already exists in /tmp/drogon, pulling latest..."
-  (cd /tmp/drogon && git pull)
+  (cd /tmp/drogon && git pull --recurse-submodules)
 fi
+
+echo "[setup_drogon] Ensuring submodules are initialized..."
+(cd /tmp/drogon && git submodule update --init --recursive)
 
 cd /tmp/drogon
 mkdir -p build
