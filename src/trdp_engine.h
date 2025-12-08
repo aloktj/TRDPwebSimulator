@@ -80,6 +80,9 @@ class TrdpEngine {
     // Stop cyclic publishing for a TX PD telegram.
     bool stopTxTelegram(std::uint32_t comId);
 
+    // Report whether cyclic publishing is active for a TX PD telegram. Returns nullopt for non-TX/PD endpoints.
+    std::optional<bool> txPublishActive(std::uint32_t comId);
+
     // Feed a freshly received PD telegram into the registry/runtime.
     void handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
 

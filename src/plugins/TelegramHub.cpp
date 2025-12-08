@@ -92,6 +92,10 @@ void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std:
     payload["type"] = "tx";
     payload["comId"] = comId;
     payload["fields"] = fieldsToJson(fields);
+    const auto active = TrdpEngine::instance().txPublishActive(comId);
+    if (active.has_value()) {
+        payload["txActive"] = *active;
+    }
     broadcast(payload);
 }
 
@@ -149,6 +153,9 @@ Json::Value TelegramHub::telegramToJson(const TelegramDef &telegram) const {
     json["expectedReplies"] = static_cast<Json::UInt64>(telegram.expectedReplies);
     json["replyTimeoutMs"] = static_cast<Json::UInt64>(telegram.replyTimeout.count());
     json["confirmTimeoutMs"] = static_cast<Json::UInt64>(telegram.confirmTimeout.count());
+    if (telegram.direction == Direction::Tx && telegram.type == TelegramType::PD) {
+        json["txActive"] = TrdpEngine::instance().txPublishActive(telegram.comId).value_or(false);
+    }
     return json;
 }
 
