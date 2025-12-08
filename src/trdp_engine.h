@@ -77,6 +77,9 @@ class TrdpEngine {
     // Push updated TX field values to the network. Returns false on failure.
     bool sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields);
 
+    // Stop cyclic publishing for a TX PD telegram.
+    bool stopTxTelegram(std::uint32_t comId);
+
     // Feed a freshly received PD telegram into the registry/runtime.
     void handleRxTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
 

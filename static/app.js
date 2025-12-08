@@ -2,6 +2,7 @@ const state = {
   telegrams: new Map(),
   selectedId: null,
   ws: null,
+  fieldDrafts: new Map(),
 };
 
 const telegramTableBody = document.querySelector('#telegram-table tbody');
@@ -12,15 +13,83 @@ const statusEl = document.querySelector('#status');
 const refreshBtn = document.querySelector('#refresh-btn');
 const saveBtn = document.querySelector('#save-fields');
 const sendBtn = document.querySelector('#send-telegram');
+const stopBtn = document.querySelector('#stop-telegram');
+const clearBtn = document.querySelector('#clear-fields');
 const actionGroup = document.querySelector('#detail-actions');
 
 refreshBtn.addEventListener('click', () => loadTelegrams());
 saveBtn.addEventListener('click', () => persistFields());
 sendBtn.addEventListener('click', () => sendTelegram());
+stopBtn.addEventListener('click', () => stopTelegram());
+clearBtn.addEventListener('click', () => clearFields());
 
 function showStatus(message, kind = 'info') {
   statusEl.textContent = message;
   statusEl.className = `status ${kind}`;
+}
+
+function isEditingSelectedTelegram(comId = state.selectedId) {
+  const active = document.activeElement;
+  if (!active) return false;
+  const isInput = active.tagName === 'INPUT' || active.tagName === 'TEXTAREA';
+  return isInput && active.closest('#fields-table') && state.selectedId === comId;
+}
+
+function formatDisplayValue(value) {
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value === null || value === undefined) return '';
+  return value;
+}
+
+function formatFieldsForDisplay(fields) {
+  const draft = {};
+  Object.entries(fields || {}).forEach(([name, value]) => {
+    draft[name] = formatDisplayValue(value);
+  });
+  return draft;
+}
+
+function persistCurrentDraft() {
+  if (!state.selectedId) return;
+  const drafts = {};
+  fieldsTableBody.querySelectorAll('input, textarea').forEach((el) => {
+    drafts[el.dataset.fieldName] = el.value;
+  });
+  if (Object.keys(drafts).length) {
+    state.fieldDrafts.set(state.selectedId, drafts);
+  }
+}
+
+function setDraftValue(comId, name, value) {
+  const current = state.fieldDrafts.get(comId) || {};
+  state.fieldDrafts.set(comId, { ...current, [name]: value });
+}
+
+function getDraftValue(comId, name) {
+  const current = state.fieldDrafts.get(comId) || {};
+  return current[name];
+}
+
+function rememberFocus() {
+  const active = document.activeElement;
+  if (!active || !active.dataset.fieldName) return null;
+  return {
+    fieldName: active.dataset.fieldName,
+    selectionStart: active.selectionStart,
+    selectionEnd: active.selectionEnd,
+  };
+}
+
+function restoreFocus(snapshot) {
+  if (!snapshot) return;
+  const target = fieldsTableBody.querySelector(`[data-field-name="${snapshot.fieldName}"]`);
+  if (target) {
+    target.focus();
+    if (typeof snapshot.selectionStart === 'number' && typeof snapshot.selectionEnd === 'number') {
+      target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+    }
+  }
 }
 
 function formatDirection(dir) {
@@ -32,9 +101,16 @@ function upsertTelegram(meta) {
   state.telegrams.set(meta.comId, { ...existing, ...meta, fields: existing.fields || {} });
 }
 
-function updateFields(comId, fields) {
+function updateFields(comId, fields, { replaceDraft = false } = {}) {
   const current = state.telegrams.get(comId) || { fields: {} };
   state.telegrams.set(comId, { ...current, fields: { ...current.fields, ...fields } });
+
+  const shouldUpdateDraft = replaceDraft || !isEditingSelectedTelegram(comId);
+  if (shouldUpdateDraft) {
+    const updated = state.telegrams.get(comId);
+    state.fieldDrafts.set(comId, formatFieldsForDisplay(updated.fields || {}));
+  }
+
   if (state.selectedId === comId) {
     renderFields();
   }
@@ -57,11 +133,12 @@ async function loadTelegrams() {
 
 async function loadTelegramDetails(comId) {
   try {
+    persistCurrentDraft();
     const resp = await fetch(`/api/telegrams/${comId}`);
     if (!resp.ok) throw new Error('Failed to fetch telegram');
     const tg = await resp.json();
     upsertTelegram(tg);
-    updateFields(comId, tg.fields || {});
+    updateFields(comId, tg.fields || {}, { replaceDraft: true });
     state.selectedId = comId;
     renderTelegramTable();
     renderFields();
@@ -91,11 +168,11 @@ function renderTelegramTable() {
   });
 }
 
-function valueToInput(fieldName, value, editable) {
+function valueToInput(fieldName, value, displayValue, editable) {
   const container = document.createElement('div');
   if (Array.isArray(value)) {
     const area = document.createElement('textarea');
-    area.value = value.join(', ');
+    area.value = displayValue;
     area.dataset.fieldName = fieldName;
     area.disabled = !editable;
     container.appendChild(area);
@@ -103,7 +180,7 @@ function valueToInput(fieldName, value, editable) {
   }
   const input = document.createElement('input');
   input.type = 'text';
-  input.value = value === null || value === undefined ? '' : value;
+  input.value = displayValue;
   input.dataset.fieldName = fieldName;
   input.disabled = !editable;
   container.appendChild(input);
@@ -111,6 +188,8 @@ function valueToInput(fieldName, value, editable) {
 }
 
 function renderFields() {
+  const focusSnapshot = rememberFocus();
+  persistCurrentDraft();
   fieldsTableBody.innerHTML = '';
   const tg = state.telegrams.get(state.selectedId);
   if (!tg) {
@@ -131,7 +210,13 @@ function renderFields() {
     const labelCell = document.createElement('td');
     labelCell.textContent = name;
     const valueCell = document.createElement('td');
-    const inputEl = valueToInput(name, value, editable);
+    const draftValue = getDraftValue(state.selectedId, name);
+    const displayValue = draftValue !== undefined ? draftValue : formatDisplayValue(value);
+    const inputEl = valueToInput(name, value, displayValue, editable);
+    const input = inputEl.querySelector('input, textarea');
+    if (input && editable) {
+      input.addEventListener('input', () => setDraftValue(state.selectedId, name, input.value));
+    }
     valueCell.appendChild(inputEl);
     tr.appendChild(labelCell);
     tr.appendChild(valueCell);
@@ -147,6 +232,8 @@ function renderFields() {
     tr.appendChild(td);
     fieldsTableBody.appendChild(tr);
   }
+
+  restoreFocus(focusSnapshot);
 }
 
 function parseInputValue(original, rawValue) {
@@ -192,7 +279,7 @@ async function persistFields() {
     });
     if (!resp.ok) throw new Error('Failed to save fields');
     const data = await resp.json();
-    updateFields(state.selectedId, data);
+    updateFields(state.selectedId, data, { replaceDraft: true });
     showStatus('Fields saved', 'success');
   } catch (err) {
     console.error(err);
@@ -218,11 +305,59 @@ async function sendTelegram() {
   }
 }
 
+async function stopTelegram() {
+  if (!state.selectedId) return;
+  try {
+    showStatus('Stopping telegram...');
+    const resp = await fetch(`/api/telegrams/${state.selectedId}/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!resp.ok) throw new Error('Failed to stop telegram');
+    const data = await resp.json();
+    if (data && data.ok) {
+      showStatus('Telegram stopped', 'success');
+    } else {
+      showStatus('Failed to stop telegram', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showStatus('Failed to stop telegram', 'error');
+  }
+}
+
+async function clearFields() {
+  if (!state.selectedId) return;
+  const tg = state.telegrams.get(state.selectedId);
+  if (!tg || !tg.fields) return;
+
+  const payload = {};
+  Object.keys(tg.fields).forEach((name) => {
+    payload[name] = null;
+  });
+
+  try {
+    showStatus('Clearing fields...');
+    const resp = await fetch(`/api/telegrams/${state.selectedId}/fields`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error('Failed to clear fields');
+    const data = await resp.json();
+    updateFields(state.selectedId, data, { replaceDraft: true });
+    showStatus('Fields cleared', 'success');
+  } catch (err) {
+    console.error(err);
+    showStatus('Failed to clear fields', 'error');
+  }
+}
+
 function handleSnapshot(data) {
   if (!Array.isArray(data.telegrams)) return;
   data.telegrams.forEach((tg) => {
     upsertTelegram(tg);
-    if (tg.fields) updateFields(tg.comId, tg.fields);
+    if (tg.fields) updateFields(tg.comId, tg.fields, { replaceDraft: true });
   });
   renderTelegramTable();
   renderFields();

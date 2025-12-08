@@ -270,5 +270,39 @@ void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
     callback(resp);
 }
 
+void TelegramController::stopTelegram(const drogon::HttpRequestPtr &,
+                                      std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                      std::uint32_t comId) {
+    if (!ensureRegistryInitialized()) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+        resp->setStatusCode(drogon::k500InternalServerError);
+        (*resp->getJsonObject())["error"] = "TRDP registry is not initialised";
+        callback(resp);
+        return;
+    }
+
+    const auto telegram = TelegramRegistry::instance().getTelegramCopy(comId);
+    if (!telegram.has_value()) {
+        callback(drogon::HttpResponse::newNotFoundResponse());
+        return;
+    }
+
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
+    if (telegram->direction != Direction::Tx || telegram->type != TelegramType::PD) {
+        resp->setStatusCode(drogon::k400BadRequest);
+        (*resp->getJsonObject())["ok"] = false;
+        (*resp->getJsonObject())["error"] = "Telegram is not a TX PD telegram";
+        callback(resp);
+        return;
+    }
+
+    const bool success = TrdpEngine::instance().stopTxTelegram(comId);
+    (*resp->getJsonObject())["ok"] = success;
+    if (!success) {
+        resp->setStatusCode(drogon::k400BadRequest);
+    }
+    callback(resp);
+}
+
 } // namespace trdp
 
