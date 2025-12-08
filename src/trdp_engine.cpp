@@ -270,8 +270,33 @@ std::optional<std::uint32_t> resolveInterfaceIp(const std::string &ifName) {
     return ip;
 }
 
+std::optional<std::uint32_t> firstNonLoopbackIp() {
+    ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || ifaddr == nullptr) {
+        return std::nullopt;
+    }
+
+    std::optional<std::uint32_t> ip;
+    for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+
+        const auto *addr = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
+        const auto hostOrder = static_cast<std::uint32_t>(ntohl(addr->sin_addr.s_addr));
+        if ((hostOrder & 0xFF000000U) == 0x7F000000U) {
+            continue;
+        }
+        ip = hostOrder;
+        break;
+    }
+
+    freeifaddrs(ifaddr);
+    return ip;
+}
+
 TRDP_IP_ADDR_T toTrdpIp(std::uint32_t hostOrderIp) {
-    return static_cast<TRDP_IP_ADDR_T>(htonl(hostOrderIp));
+    return static_cast<TRDP_IP_ADDR_T>(hostOrderIp);
 }
 
 std::string describeTrdpError(TRDP_ERR_T err) {
@@ -297,6 +322,10 @@ std::string describeTrdpError(TRDP_ERR_T err) {
     default:
         return std::string{"TRDP error code "} + std::to_string(err);
     }
+}
+
+void logTrdpError(const std::string &context, TRDP_ERR_T err) {
+    std::cerr << "[TRDP] " << context << " failed: " << describeTrdpError(err) << " (" << err << ")" << std::endl;
 }
 #endif
 
@@ -547,7 +576,11 @@ bool TrdpEngine::initialiseTrdpStack() {
 
     const TRDP_ERR_T initErr = tlc_init(nullptr, nullptr, &memConfig);
     if (initErr != TRDP_NO_ERR) {
-        std::cerr << "[TRDP] tlc_init failed: " << initErr << std::endl;
+        logTrdpError("tlc_init", initErr);
+        if (initErr == TRDP_PARAM_ERR) {
+            std::cerr << "[TRDP] Hint: verify TRDP/TAU packages are installed and compatible with the simulator build; "
+                      << "parameter errors often indicate a version or configuration mismatch." << std::endl;
+        }
         return false;
     }
 
@@ -578,9 +611,23 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
 
     if ((sessionIp & 0xFF000000U) == 0x7F000000U) {
-        std::cerr << "[TRDP] Ignoring loopback session IP " << formatIp(sessionIp)
-                  << "; TRDP stack requires a non-loopback interface" << std::endl;
-        sessionIp = 0U;
+        const auto fallbackIp = firstNonLoopbackIp();
+        if (fallbackIp) {
+            std::cerr << "[TRDP] Loopback session IP " << formatIp(sessionIp)
+                      << " will be replaced with non-loopback address " << formatIp(*fallbackIp)
+                      << " to satisfy TRDP socket binding requirements" << std::endl;
+            sessionIp = *fallbackIp;
+        } else {
+            std::cerr << "[TRDP] Only loopback interfaces found; attempting to continue with " << formatIp(sessionIp)
+                      << std::endl;
+        }
+    } else if (sessionIp == 0U) {
+        const auto fallbackIp = firstNonLoopbackIp();
+        if (fallbackIp) {
+            std::cout << "[TRDP] No session IP configured; defaulting to interface IP " << formatIp(*fallbackIp)
+                      << std::endl;
+            sessionIp = *fallbackIp;
+        }
     }
 
     if (!config.txInterface.empty() && !txIp) {
@@ -592,8 +639,9 @@ bool TrdpEngine::initialiseTrdpStack() {
                   << "'; falling back to default stack selection" << std::endl;
     }
 
-    if (sessionIp != 0U) {
-        std::cout << "[TRDP] Binding TRDP sessions to interface IP " << formatIp(sessionIp) << std::endl;
+    resolvedSessionIp = sessionIp;
+    if (resolvedSessionIp != 0U) {
+        std::cout << "[TRDP] Binding TRDP sessions to interface IP " << formatIp(resolvedSessionIp) << std::endl;
     }
 
     std::set<std::uint16_t> pdPorts;
@@ -631,7 +679,7 @@ bool TrdpEngine::initialiseTrdpStack() {
         mdPorts.insert(resolveDefaultPort(TelegramType::MD));
     }
 
-    const auto trdpSessionIp = toTrdpIp(sessionIp);
+    const auto trdpSessionIp = toTrdpIp(resolvedSessionIp);
 
     auto openPdSession = [&](std::uint16_t port) {
         TRDP_PD_CONFIG_T pdDefault{};
@@ -645,7 +693,7 @@ bool TrdpEngine::initialiseTrdpStack() {
         TRDP_APP_SESSION_T session{};
         const TRDP_ERR_T pdErr = tlc_openSession(&session, trdpSessionIp, 0U, nullptr, &pdDefault, nullptr, nullptr);
         if (pdErr != TRDP_NO_ERR) {
-            std::cerr << "[TRDP] tlc_openSession for PD port " << port << " failed: " << pdErr << std::endl;
+            logTrdpError("tlc_openSession for PD port " + std::to_string(port), pdErr);
             return false;
         }
         pdSessions.emplace(port, session);
@@ -669,7 +717,7 @@ bool TrdpEngine::initialiseTrdpStack() {
         TRDP_APP_SESSION_T session{};
         const TRDP_ERR_T mdErr = tlc_openSession(&session, trdpSessionIp, 0U, nullptr, nullptr, &mdDefault, nullptr);
         if (mdErr != TRDP_NO_ERR) {
-            std::cerr << "[TRDP] tlc_openSession for MD port " << port << " failed: " << mdErr << std::endl;
+            logTrdpError("tlc_openSession for MD port " + std::to_string(port), mdErr);
             return false;
         }
 
@@ -1258,15 +1306,14 @@ void TrdpEngine::buildEndpoints() {
                 std::cerr << "[TRDP] PD session port mismatch for ComId " << telegram.comId << " (requested "
                           << requestedPort << ", bound " << boundPort << ")" << std::endl;
             }
-            auto effectiveSrcIp = telegram.srcIp;
-            if ((effectiveSrcIp & 0xFF000000U) == 0x7F000000U) {
-                std::cerr << "[TRDP] Source IP " << formatIp(effectiveSrcIp) << " for ComId " << telegram.comId
-                          << " is loopback; using 0.0.0.0 to allow TRDP to select an outbound interface"
-                          << std::endl;
-                effectiveSrcIp = 0U;
-            }
-
             if (handle.pdHandleReady && stackAvailable) {
+                auto effectiveSrcIp = telegram.srcIp;
+                if (telegram.direction == Direction::Tx && (effectiveSrcIp & 0xFF000000U) == 0x7F000000U && resolvedSessionIp != 0U) {
+                    std::cerr << "[TRDP] Source IP " << formatIp(effectiveSrcIp) << " for ComId " << telegram.comId
+                              << " is loopback; using session interface IP " << formatIp(resolvedSessionIp)
+                              << " for publishes" << std::endl;
+                    effectiveSrcIp = resolvedSessionIp;
+                }
                 if (telegram.direction == Direction::Tx && effectiveSrcIp != 0U && !ipAssignedToLocalInterface(effectiveSrcIp)) {
                     std::cerr << "[TRDP] Source IP " << formatIp(effectiveSrcIp) << " for ComId " << telegram.comId
                               << " is not configured on this host; TRDP will reject the publish request. "
@@ -1274,13 +1321,13 @@ void TrdpEngine::buildEndpoints() {
                               << std::endl;
                     handle.pdHandleReady = false;
                 }
-            }
-            if (handle.pdHandleReady && stackAvailable) {
+
                 auto destIp = telegram.destIp;
-                if (telegram.direction == Direction::Tx && (destIp & 0xFF000000U) == 0x7F000000U) {
+                if (telegram.direction == Direction::Tx && (destIp & 0xFF000000U) == 0x7F000000U && resolvedSessionIp != 0U) {
                     std::cerr << "[TRDP] Destination IP " << formatIp(destIp) << " for ComId " << telegram.comId
-                              << " is loopback; using 0.0.0.0 to allow TRDP to select a route" << std::endl;
-                    destIp = 0U;
+                              << " is loopback; using session interface IP " << formatIp(resolvedSessionIp)
+                              << " for publishes" << std::endl;
+                    destIp = resolvedSessionIp;
                 }
                 if (telegram.direction == Direction::Rx && destIp != 0U && !ipAssignedToLocalInterface(destIp)) {
                     std::cerr << "[TRDP] Destination IP " << formatIp(destIp) << " for ComId " << telegram.comId
@@ -1298,23 +1345,23 @@ void TrdpEngine::buildEndpoints() {
                 applyTelegramPorts(telegram, sendParam);
                 applyTelegramQos(telegram, recvParams);
                 applyTelegramPorts(telegram, recvParams);
-                const TRDP_FLAGS_T pdFlags = static_cast<TRDP_FLAGS_T>(telegram.trdpFlags);
-                const auto buffer = runtime->getBufferCopy();
-                TRDP_ERR_T pdErr{};
-                if (telegram.direction == Direction::Tx) {
-                    const auto intervalMs = static_cast<UINT32>(telegram.cycle.count());
-                    constexpr UINT32 redundancyId = 0U;
-                    pdErr = tlp_publish(handle.pdSessionHandle, &handle.pdPublishHandle, this, nullptr, 0U,
-                                        telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp, trdpDestIp,
-                                        intervalMs, redundancyId, pdFlags, &sendParam, buffer.data(),
-                                        static_cast<UINT32>(buffer.size()));
-                } else {
-                    constexpr UINT32 redundancyId = 0U;
-                    pdErr = tlp_subscribe(handle.pdSessionHandle, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
-                                           telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp,
-                                           redundancyId, trdpDestIp, pdFlags, &recvParams, 0U,
-                                           static_cast<TRDP_TO_BEHAVIOR_T>(0U));
-                }
+                  const TRDP_FLAGS_T pdFlags = static_cast<TRDP_FLAGS_T>(telegram.trdpFlags);
+                  const auto buffer = runtime->getBufferCopy();
+                  TRDP_ERR_T pdErr{};
+                  if (telegram.direction == Direction::Tx) {
+                      const auto intervalUs = static_cast<UINT32>(
+                          std::chrono::duration_cast<std::chrono::microseconds>(telegram.cycle).count());
+                      constexpr UINT32 redundancyId = 0U;
+                      pdErr = tlp_publish(handle.pdSessionHandle, &handle.pdPublishHandle, this, nullptr, 0U,
+                                          telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp, trdpDestIp,
+                                          intervalUs, redundancyId, pdFlags, &sendParam, buffer.data(),
+                                          static_cast<UINT32>(buffer.size()));
+                  } else {
+                      constexpr UINT32 redundancyId = 0U;
+                      pdErr = tlp_subscribe(handle.pdSessionHandle, &handle.pdSubscribeHandle, this, pdReceiveCallback, 0U,
+                                             telegram.comId, etbTopoCounter, opTrainTopoCounter, trdpSrcIp, trdpSrcIp,
+                                             trdpDestIp, pdFlags, &recvParams, 0U, static_cast<TRDP_TO_BEHAVIOR_T>(0U));
+                  }
                 handle.pdHandleReady = (pdErr == TRDP_NO_ERR);
                 if (pdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] PD binding failed for ComId " << telegram.comId << ": "
