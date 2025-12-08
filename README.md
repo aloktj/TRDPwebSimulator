@@ -416,6 +416,17 @@ sudo dpkg -i binary/tcopentrdp-2.2.23-amd64.deb
 
 This installs headers under `/usr/include/trdp`, libraries under `/usr/lib` (`libtrdp`, `libtrdpap`, `libtau`), and CMake config files under `/usr/lib/cmake/TRDP` and `/usr/lib/cmake/TCOpenTRDP`, enabling `find_package(TRDP CONFIG REQUIRED)`.
 
+### Quick dependency setup (preferred)
+
+The easiest way to prepare the simulator is to install the two Debian packages that ship with the repository:
+
+```bash
+sudo dpkg -i binary/drogon_1.9.11-0_amd64.deb
+sudo dpkg -i binary/tcopentrdp-2.2.23-amd64.deb
+```
+
+This drops Drogon and the TCOpen TRDP/TAU stack into system locations so CMake can discover them without rebuilding third-party code. Use the existing toggles (`USE_SYSTEM_DROGON`, `USE_SYSTEM_TRDP`) if you prefer the vendored copies instead.
+
 ## Drogon Setup (Once per Machine)
 
 The project assumes **Drogon is installed system-wide** (typically under `/usr/local`). Install it once per machine or dev container using the helper script:
