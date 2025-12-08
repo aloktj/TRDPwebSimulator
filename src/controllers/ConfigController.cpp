@@ -35,6 +35,9 @@ Json::Value telegramToJson(const TelegramDef &telegram) {
     json["expectedReplies"] = static_cast<Json::UInt64>(telegram.expectedReplies);
     json["replyTimeoutMs"] = static_cast<Json::UInt64>(telegram.replyTimeout.count());
     json["confirmTimeoutMs"] = static_cast<Json::UInt64>(telegram.confirmTimeout.count());
+    if (telegram.direction == Direction::Tx && telegram.type == TelegramType::PD) {
+        json["txActive"] = TrdpEngine::instance().txPublishActive(telegram.comId).value_or(false);
+    }
     return json;
 }
 } // namespace

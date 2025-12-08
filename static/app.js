@@ -101,6 +101,15 @@ function upsertTelegram(meta) {
   state.telegrams.set(meta.comId, { ...existing, ...meta, fields: existing.fields || {} });
 }
 
+function setTxActive(comId, active) {
+  const tg = state.telegrams.get(comId);
+  if (!tg) return;
+  state.telegrams.set(comId, { ...tg, txActive: Boolean(active) });
+  if (state.selectedId === comId) {
+    renderFields();
+  }
+}
+
 function updateFields(comId, fields, { replaceDraft = false } = {}) {
   const current = state.telegrams.get(comId) || { fields: {} };
   state.telegrams.set(comId, { ...current, fields: { ...current.fields, ...fields } });
@@ -196,6 +205,8 @@ function renderFields() {
     detailTitle.textContent = 'Telegram Details';
     detailMeta.textContent = 'Select a telegram to view details.';
     actionGroup.hidden = true;
+    sendBtn.disabled = true;
+    stopBtn.disabled = true;
     return;
   }
 
@@ -203,6 +214,10 @@ function renderFields() {
   detailMeta.textContent = `${tg.direction} • ${tg.type} • Dataset: ${tg.dataset}`;
   const editable = tg.direction === 'Tx';
   actionGroup.hidden = !editable;
+  const isTxPd = tg.direction === 'Tx' && tg.type === 'PD';
+  const publishing = Boolean(tg.txActive);
+  sendBtn.disabled = !editable || (isTxPd && publishing);
+  stopBtn.disabled = !editable || !isTxPd || !publishing;
 
   const fieldEntries = Object.entries(tg.fields || {}).sort(([a], [b]) => a.localeCompare(b));
   fieldEntries.forEach(([name, value]) => {
@@ -298,6 +313,10 @@ async function sendTelegram() {
       body: JSON.stringify(payload),
     });
     if (!resp.ok) throw new Error('Failed to send telegram');
+    const data = await resp.json();
+    if (data && 'txActive' in data) {
+      setTxActive(state.selectedId, data.txActive);
+    }
     showStatus('Telegram dispatched', 'success');
   } catch (err) {
     console.error(err);
@@ -315,6 +334,9 @@ async function stopTelegram() {
     });
     if (!resp.ok) throw new Error('Failed to stop telegram');
     const data = await resp.json();
+    if (data && 'txActive' in data) {
+      setTxActive(state.selectedId, data.txActive);
+    }
     if (data && data.ok) {
       showStatus('Telegram stopped', 'success');
     } else {
@@ -345,6 +367,7 @@ async function clearFields() {
     });
     if (!resp.ok) throw new Error('Failed to clear fields');
     const data = await resp.json();
+    state.fieldDrafts.delete(state.selectedId);
     updateFields(state.selectedId, data, { replaceDraft: true });
     showStatus('Fields cleared', 'success');
   } catch (err) {
@@ -357,6 +380,9 @@ function handleSnapshot(data) {
   if (!Array.isArray(data.telegrams)) return;
   data.telegrams.forEach((tg) => {
     upsertTelegram(tg);
+    if ('txActive' in tg) {
+      setTxActive(tg.comId, tg.txActive);
+    }
     if (tg.fields) updateFields(tg.comId, tg.fields, { replaceDraft: true });
   });
   renderTelegramTable();
@@ -365,6 +391,9 @@ function handleSnapshot(data) {
 
 function handleUpdate(message) {
   if (!message || !message.comId) return;
+  if ('txActive' in message) {
+    setTxActive(message.comId, message.txActive);
+  }
   if (message.fields) {
     updateFields(message.comId, message.fields);
   }
