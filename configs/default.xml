@@ -38,16 +38,16 @@
   </datasets>
 
   <telegrams>
-    <telegram name="TxHeartbeat" comId="1001" direction="TX" type="PD" dataset="HeartbeatDataset" cycle="1000" ttl="64" port="17224" srcIp="10.0.0.1" destIp="10.0.0.2" description="Simple TX heartbeat for connectivity checks" />
-    <telegram name="RxHeartbeat" comId="1002" direction="RX" type="PD" dataset="HeartbeatDataset" cycle="1000" ttl="64" port="17224" srcIp="10.0.0.2" destIp="10.0.0.1" description="RX heartbeat used to confirm RX decoding" />
+    <telegram name="TxHeartbeat" comId="1001" direction="TX" type="PD" dataset="HeartbeatDataset" cycle="1000" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="Simple TX heartbeat for connectivity checks" />
+    <telegram name="RxHeartbeat" comId="1002" direction="RX" type="PD" dataset="HeartbeatDataset" cycle="1000" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="RX heartbeat used to confirm RX decoding" />
 
-    <telegram name="TxStatus" comId="1101" direction="TX" type="PD" dataset="SystemStatus" cycle="500" ttl="64" port="17224" srcIp="10.0.0.1" destIp="10.0.0.2" description="TX system status payload" />
-    <telegram name="RxStatus" comId="1102" direction="RX" type="PD" dataset="SystemStatus" cycle="500" ttl="64" port="17224" srcIp="10.0.0.2" destIp="10.0.0.1" description="RX system status payload" />
+    <telegram name="TxStatus" comId="1101" direction="TX" type="PD" dataset="SystemStatus" cycle="500" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="TX system status payload" />
+    <telegram name="RxStatus" comId="1102" direction="RX" type="PD" dataset="SystemStatus" cycle="500" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="RX system status payload" />
 
-    <telegram name="TxControlCommand" comId="1201" direction="TX" type="PD" dataset="ControlCommand" cycle="200" ttl="64" port="17224" srcIp="10.0.0.1" destIp="10.0.0.2" description="Control command to exercise TX marshalling" />
-    <telegram name="RxControlCommandAck" comId="1202" direction="RX" type="PD" dataset="ControlCommand" cycle="200" ttl="64" port="17224" srcIp="10.0.0.2" destIp="10.0.0.1" description="Echoed control data for RX validation" />
+    <telegram name="TxControlCommand" comId="1201" direction="TX" type="PD" dataset="ControlCommand" cycle="200" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="Control command to exercise TX marshalling" />
+    <telegram name="RxControlCommandAck" comId="1202" direction="RX" type="PD" dataset="ControlCommand" cycle="200" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="Echoed control data for RX validation" />
 
-    <telegram name="MdMaintenanceRequest" comId="2001" direction="TX" type="MD" dataset="MdRequest" ttl="64" port="17224" srcIp="10.0.0.1" destIp="10.0.0.2" description="MD request covering message data path" />
-    <telegram name="MdMaintenanceResponse" comId="2002" direction="RX" type="MD" dataset="MdResponse" ttl="64" port="17224" srcIp="10.0.0.2" destIp="10.0.0.1" description="MD response used to verify MD parsing" />
+    <telegram name="MdMaintenanceRequest" comId="2001" direction="TX" type="MD" dataset="MdRequest" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD request covering message data path" />
+    <telegram name="MdMaintenanceResponse" comId="2002" direction="RX" type="MD" dataset="MdResponse" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD response used to verify MD parsing" />
   </telegrams>
 </TrdpConfiguration>
