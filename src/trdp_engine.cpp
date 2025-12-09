@@ -135,9 +135,9 @@ FieldValue decodeSingleValue(const FieldDef &field, const std::uint8_t *ptr, std
     return {};
 }
 
-void encodeSingleValue(const FieldDef &field, const FieldValue &value, std::uint8_t *dest, std::size_t destSize) {
+bool encodeSingleValue(const FieldDef &field, const FieldValue &value, std::uint8_t *dest, std::size_t destSize) {
     if (dest == nullptr || destSize < fieldWidth(field)) {
-        return;
+        return false;
     }
 
     auto fillBytes = [&](const std::vector<std::uint8_t> &src) {
@@ -148,44 +148,84 @@ void encodeSingleValue(const FieldDef &field, const FieldValue &value, std::uint
         }
     };
 
+    try {
+        switch (field.type) {
+        case FieldType::BOOL:
+            writeLe<std::uint8_t>(dest, std::get<bool>(value) ? 1U : 0U);
+            break;
+        case FieldType::INT8:
+            writeLe<std::int8_t>(dest, std::get<std::int8_t>(value));
+            break;
+        case FieldType::UINT8:
+            writeLe<std::uint8_t>(dest, std::get<std::uint8_t>(value));
+            break;
+        case FieldType::INT16:
+            writeLe<std::int16_t>(dest, std::get<std::int16_t>(value));
+            break;
+        case FieldType::UINT16:
+            writeLe<std::uint16_t>(dest, std::get<std::uint16_t>(value));
+            break;
+        case FieldType::INT32:
+            writeLe<std::int32_t>(dest, std::get<std::int32_t>(value));
+            break;
+        case FieldType::UINT32:
+            writeLe<std::uint32_t>(dest, std::get<std::uint32_t>(value));
+            break;
+        case FieldType::FLOAT:
+            writeLe<float>(dest, std::get<float>(value));
+            break;
+        case FieldType::DOUBLE:
+            writeLe<double>(dest, std::get<double>(value));
+            break;
+        case FieldType::STRING: {
+            const auto &str = std::get<std::string>(value);
+            std::memset(dest, 0, destSize);
+            std::memcpy(dest, str.data(), std::min(str.size(), destSize));
+            break;
+        }
+        case FieldType::BYTES:
+            fillBytes(std::get<std::vector<std::uint8_t>>(value));
+            break;
+        }
+        return true;
+    } catch (const std::bad_variant_access &e) {
+        std::cerr << "[TRDP] Failed to encode field '" << field.name << "': " << e.what() << std::endl;
+    } catch (const std::exception &e) {
+        std::cerr << "[TRDP] Unexpected error while encoding field '" << field.name << "': " << e.what()
+                  << std::endl;
+    } catch (...) {
+        std::cerr << "[TRDP] Unknown error while encoding field '" << field.name << "'" << std::endl;
+    }
+
+    return false;
+}
+
+bool fieldValueMatchesType(const FieldDef &field, const FieldValue &value) {
     switch (field.type) {
     case FieldType::BOOL:
-        writeLe<std::uint8_t>(dest, std::get<bool>(value) ? 1U : 0U);
-        break;
+        return std::holds_alternative<bool>(value);
     case FieldType::INT8:
-        writeLe<std::int8_t>(dest, std::get<std::int8_t>(value));
-        break;
+        return std::holds_alternative<std::int8_t>(value);
     case FieldType::UINT8:
-        writeLe<std::uint8_t>(dest, std::get<std::uint8_t>(value));
-        break;
+        return std::holds_alternative<std::uint8_t>(value);
     case FieldType::INT16:
-        writeLe<std::int16_t>(dest, std::get<std::int16_t>(value));
-        break;
+        return std::holds_alternative<std::int16_t>(value);
     case FieldType::UINT16:
-        writeLe<std::uint16_t>(dest, std::get<std::uint16_t>(value));
-        break;
+        return std::holds_alternative<std::uint16_t>(value);
     case FieldType::INT32:
-        writeLe<std::int32_t>(dest, std::get<std::int32_t>(value));
-        break;
+        return std::holds_alternative<std::int32_t>(value);
     case FieldType::UINT32:
-        writeLe<std::uint32_t>(dest, std::get<std::uint32_t>(value));
-        break;
+        return std::holds_alternative<std::uint32_t>(value);
     case FieldType::FLOAT:
-        writeLe<float>(dest, std::get<float>(value));
-        break;
+        return std::holds_alternative<float>(value);
     case FieldType::DOUBLE:
-        writeLe<double>(dest, std::get<double>(value));
-        break;
-    case FieldType::STRING: {
-        const auto &str = std::get<std::string>(value);
-        std::memset(dest, 0, destSize);
-        std::memcpy(dest, str.data(), std::min(str.size(), destSize));
-        break;
-    }
+        return std::holds_alternative<double>(value);
+    case FieldType::STRING:
+        return std::holds_alternative<std::string>(value);
     case FieldType::BYTES:
-        fillBytes(std::get<std::vector<std::uint8_t>>(value));
-        break;
+        return std::holds_alternative<std::vector<std::uint8_t>>(value);
     }
+    return false;
 }
 
 bool fieldValueMatchesType(const FieldDef &field, const FieldValue &value) {
@@ -234,7 +274,9 @@ std::vector<std::uint8_t> encodeFields(const DatasetDef &dataset, const std::map
         if (field.offset + width > buffer.size()) {
             continue;
         }
-        encodeSingleValue(field, it->second, buffer.data() + field.offset, width);
+        if (!encodeSingleValue(field, it->second, buffer.data() + field.offset, width)) {
+            std::cerr << "[TRDP] Skip encoding field '" << field.name << "' due to conversion failure" << std::endl;
+        }
     }
 
     return buffer;
@@ -1512,68 +1554,76 @@ TrdpEngine::EndpointHandle *TrdpEngine::findEndpoint(std::uint32_t comId) {
 
 bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields) {
     std::lock_guard lock(stateMtx);
-    auto *endpoint = findEndpoint(comId);
-    if (endpoint == nullptr) {
-        std::cerr << "[TRDP] Unknown TX ComId " << comId << std::endl;
-        return false;
-    }
-    if (endpoint->def.direction != Direction::Tx) {
-        std::cerr << "[TRDP] ComId " << comId << " is not marked as TX" << std::endl;
-        return false;
-    }
-
-    for (const auto &[name, value] : txFields) {
-        endpoint->runtime->setFieldValue(name, value);
-    }
-
-    const auto mergedFields = mergeRuntimeFields(*endpoint->runtime, txFields);
-    const auto buffer = encodeFieldsToBuffer(*endpoint->runtime, mergedFields);
-    endpoint->runtime->overwriteBuffer(buffer);
-
-    bool sent = false;
-    if (endpoint->def.type == TelegramType::MD) {
-        if (!endpoint->mdHandleReady) {
-            std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
+    try {
+        auto *endpoint = findEndpoint(comId);
+        if (endpoint == nullptr) {
+            std::cerr << "[TRDP] Unknown TX ComId " << comId << std::endl;
             return false;
         }
-#ifdef TRDP_STACK_PRESENT
-        if (stackAvailable) {
-            TRDP_SEND_PARAM_T sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
-            sendParam.ttl = endpoint->def.ttl;
-            applyTelegramQos(endpoint->def, sendParam);
-            applyTelegramPorts(endpoint->def, sendParam);
-            const auto numReplies = static_cast<UINT32>(endpoint->def.expectedReplies);
-            const auto replyTimeout = static_cast<UINT32>(endpoint->def.replyTimeout.count());
-            const auto confirmTimeout = static_cast<UINT32>(endpoint->def.confirmTimeout.count());
-            TRDP_ERR_T err = tlm_request(endpoint->mdSessionHandle, this, mdReceiveCallback, &endpoint->mdSessionId, comId,
-                                         etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp, endpoint->def.destIp,
-                                         numReplies, replyTimeout, confirmTimeout, &sendParam, buffer.data(),
-                                         static_cast<UINT32>(buffer.size()), nullptr, nullptr);
-            if (err != TRDP_NO_ERR) {
-                std::cerr << "[TRDP] tlm_request failed for ComId " << comId << ": " << err << std::endl;
+        if (endpoint->def.direction != Direction::Tx) {
+            std::cerr << "[TRDP] ComId " << comId << " is not marked as TX" << std::endl;
+            return false;
+        }
+
+        for (const auto &[name, value] : txFields) {
+            endpoint->runtime->setFieldValue(name, value);
+        }
+
+        const auto mergedFields = mergeRuntimeFields(*endpoint->runtime, txFields);
+        const auto buffer = encodeFieldsToBuffer(*endpoint->runtime, mergedFields);
+        endpoint->runtime->overwriteBuffer(buffer);
+
+        bool sent = false;
+        if (endpoint->def.type == TelegramType::MD) {
+            if (!endpoint->mdHandleReady) {
+                std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
                 return false;
             }
-            trackMdRequest(mdSessionKeyFromId(endpoint->mdSessionId), *endpoint);
-        }
+#ifdef TRDP_STACK_PRESENT
+            if (stackAvailable) {
+                TRDP_SEND_PARAM_T sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
+                sendParam.ttl = endpoint->def.ttl;
+                applyTelegramQos(endpoint->def, sendParam);
+                applyTelegramPorts(endpoint->def, sendParam);
+                const auto numReplies = static_cast<UINT32>(endpoint->def.expectedReplies);
+                const auto replyTimeout = static_cast<UINT32>(endpoint->def.replyTimeout.count());
+                const auto confirmTimeout = static_cast<UINT32>(endpoint->def.confirmTimeout.count());
+                TRDP_ERR_T err = tlm_request(endpoint->mdSessionHandle, this, mdReceiveCallback, &endpoint->mdSessionId,
+                                             comId, etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp,
+                                             endpoint->def.destIp, numReplies, replyTimeout, confirmTimeout, &sendParam,
+                                             buffer.data(), static_cast<UINT32>(buffer.size()), nullptr, nullptr);
+                if (err != TRDP_NO_ERR) {
+                    std::cerr << "[TRDP] tlm_request failed for ComId " << comId << ": " << err << std::endl;
+                    return false;
+                }
+                trackMdRequest(mdSessionKeyFromId(endpoint->mdSessionId), *endpoint);
+            }
 #endif
-        std::cout << "[TRDP] MD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
-        sent = true;
-    } else {
-        sent = publishPdBuffer(*endpoint, buffer);
-    }
-
-    if (sent) {
-        if (auto *hub = TelegramHub::instance()) {
-            hub->publishTxConfirmation(comId, mergedFields);
+            std::cout << "[TRDP] MD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+            sent = true;
+        } else {
+            sent = publishPdBuffer(*endpoint, buffer);
         }
+
+        if (sent) {
+            if (auto *hub = TelegramHub::instance()) {
+                hub->publishTxConfirmation(comId, mergedFields);
+            }
+        }
+
+        if (sent && endpoint->def.type == TelegramType::PD && endpoint->cycle.count() > 0) {
+            endpoint->txCyclicActive = true;
+            endpoint->nextSend = std::chrono::steady_clock::now() + endpoint->cycle;
+        }
+
+        return sent;
+    } catch (const std::exception &e) {
+        std::cerr << "[TRDP] Failed to send TX telegram for ComId " << comId << ": " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "[TRDP] Failed to send TX telegram for ComId " << comId << " due to unknown error" << std::endl;
     }
 
-    if (sent && endpoint->def.type == TelegramType::PD && endpoint->cycle.count() > 0) {
-        endpoint->txCyclicActive = true;
-        endpoint->nextSend = std::chrono::steady_clock::now() + endpoint->cycle;
-    }
-
-    return sent;
+    return false;
 }
 
 bool TrdpEngine::stopTxTelegram(std::uint32_t comId) {
