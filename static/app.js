@@ -3,6 +3,8 @@ const state = {
   selectedId: null,
   ws: null,
   fieldDrafts: new Map(),
+  mdSessions: new Map(),
+  mdByComId: new Map(),
 };
 
 const telegramTableBody = document.querySelector('#telegram-table tbody');
@@ -16,12 +18,38 @@ const sendBtn = document.querySelector('#send-telegram');
 const stopBtn = document.querySelector('#stop-telegram');
 const clearBtn = document.querySelector('#clear-fields');
 const actionGroup = document.querySelector('#detail-actions');
+const mdModal = document.querySelector('#md-modal');
+const mdSendBtn = document.querySelector('#md-send');
+const mdCancelBtn = document.querySelector('#md-cancel');
+const mdCloseBtn = document.querySelector('#md-close');
+const mdSimReply = document.querySelector('#md-sim-reply');
+const mdSimConfirm = document.querySelector('#md-sim-confirm');
+const mdSimError = document.querySelector('#md-sim-error');
+const mdTimeline = document.querySelector('#md-timeline');
+const mdExpected = document.querySelector('#md-expected');
+const mdReplyTimeout = document.querySelector('#md-reply-timeout');
+const mdConfirmTimeout = document.querySelector('#md-confirm-timeout');
+const mdDestIp = document.querySelector('#md-dest-ip');
+const mdDestPort = document.querySelector('#md-dest-port');
 
 refreshBtn.addEventListener('click', () => loadTelegrams());
 saveBtn.addEventListener('click', () => persistFields());
-sendBtn.addEventListener('click', () => sendTelegram());
+sendBtn.addEventListener('click', () => {
+  const tg = state.telegrams.get(state.selectedId);
+  if (tg && tg.type === 'MD') {
+    openMdModal();
+  } else {
+    sendTelegram();
+  }
+});
 stopBtn.addEventListener('click', () => stopTelegram());
 clearBtn.addEventListener('click', () => clearFields());
+mdSendBtn.addEventListener('click', () => sendMd());
+mdCancelBtn.addEventListener('click', () => closeMdModal());
+mdCloseBtn.addEventListener('click', () => closeMdModal());
+mdSimReply.addEventListener('click', () => simulateMd('reply'));
+mdSimConfirm.addEventListener('click', () => simulateMd('confirm'));
+mdSimError.addEventListener('click', () => simulateMd('error'));
 
 function showStatus(message, kind = 'info') {
   statusEl.textContent = message;
@@ -48,6 +76,15 @@ function formatFieldsForDisplay(fields) {
     draft[name] = formatDisplayValue(value);
   });
   return draft;
+}
+
+function openMdModal() {
+  mdModal.classList.remove('hidden');
+  renderMdTimeline();
+}
+
+function closeMdModal() {
+  mdModal.classList.add('hidden');
 }
 
 function persistCurrentDraft() {
@@ -249,6 +286,7 @@ function renderFields() {
   }
 
   restoreFocus(focusSnapshot);
+  renderMdTimeline();
 }
 
 function parseInputValue(original, rawValue) {
@@ -280,6 +318,19 @@ function collectFieldPayload() {
     payload[name] = parseInputValue(original, el.value);
   });
   return payload;
+}
+
+function collectMdOptions() {
+  const selectedMode = document.querySelector('input[name="md-mode"]:checked');
+  const mode = selectedMode ? selectedMode.value : 'Mn';
+  return {
+    mdMode: mode,
+    expectedReplies: Number(mdExpected.value || 0),
+    replyTimeoutMs: Number(mdReplyTimeout.value || 0),
+    confirmTimeoutMs: Number(mdConfirmTimeout.value || 0),
+    destIp: mdDestIp.value ? Number(mdDestIp.value) : undefined,
+    destPort: Number(mdDestPort.value || 0) || undefined,
+  };
 }
 
 async function persistFields() {
@@ -321,6 +372,25 @@ async function sendTelegram() {
   } catch (err) {
     console.error(err);
     showStatus('Failed to send telegram', 'error');
+  }
+}
+
+async function sendMd() {
+  if (!state.selectedId) return;
+  const payload = { ...collectFieldPayload(), ...collectMdOptions() };
+  try {
+    showStatus('Sending MD telegram...');
+    const resp = await fetch(`/api/telegrams/${state.selectedId}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error('Failed to send telegram');
+    closeMdModal();
+    showStatus('MD telegram dispatched', 'success');
+  } catch (err) {
+    console.error(err);
+    showStatus('Failed to send MD telegram', 'error');
   }
 }
 
@@ -376,6 +446,21 @@ async function clearFields() {
   }
 }
 
+async function simulateMd(event) {
+  if (!state.selectedId) return;
+  const sessions = state.mdByComId.get(state.selectedId) || [];
+  const session = sessions[sessions.length - 1] || '';
+  try {
+    await fetch(`/api/telegrams/${state.selectedId}/md/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, session }),
+    });
+  } catch (err) {
+    console.error('simulateMd failed', err);
+  }
+}
+
 function handleSnapshot(data) {
   if (!Array.isArray(data.telegrams)) return;
   data.telegrams.forEach((tg) => {
@@ -399,6 +484,51 @@ function handleUpdate(message) {
   }
 }
 
+function handleMdEvent(message) {
+  if (!message || !message.session) return;
+  const existing = state.mdSessions.get(message.session) || { comId: message.comId, events: [], mode: message.mode };
+  const timestamp = new Date().toLocaleTimeString();
+  existing.events.push({
+    event: message.event,
+    detail: message.detail,
+    receivedReplies: message.receivedReplies,
+    expectedReplies: message.expectedReplies,
+    fields: message.fields,
+    timestamp,
+  });
+  state.mdSessions.set(message.session, existing);
+  const sessions = state.mdByComId.get(message.comId) || [];
+  if (!sessions.includes(message.session)) {
+    sessions.push(message.session);
+    state.mdByComId.set(message.comId, sessions);
+  }
+  renderMdTimeline();
+}
+
+function renderMdTimeline() {
+  mdTimeline.innerHTML = '';
+  const sessions = state.mdByComId.get(state.selectedId) || [];
+  sessions.slice().reverse().forEach((sessionId) => {
+    const session = state.mdSessions.get(sessionId);
+    if (!session) return;
+    const header = document.createElement('li');
+    header.innerHTML = `<div><strong>${sessionId}</strong> <span class="muted-pill">${session.mode || ''}</span></div>`;
+    header.classList.add('muted');
+    mdTimeline.appendChild(header);
+    session.events.slice().reverse().forEach((event) => {
+      const item = document.createElement('li');
+      const left = document.createElement('div');
+      left.textContent = `${event.timestamp} • ${event.event}`;
+      const right = document.createElement('div');
+      const detail = event.detail || '';
+      right.textContent = detail;
+      item.appendChild(left);
+      item.appendChild(right);
+      mdTimeline.appendChild(item);
+    });
+  });
+}
+
 function connectWebSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = `${protocol}://${location.host}/ws/telegrams`;
@@ -420,6 +550,8 @@ function connectWebSocket() {
         handleSnapshot(payload);
       } else if (payload.type === 'rx' || payload.type === 'tx') {
         handleUpdate(payload);
+      } else if (payload.type === 'md') {
+        handleMdEvent(payload);
       }
     } catch (err) {
       console.error('Failed to parse message', err);

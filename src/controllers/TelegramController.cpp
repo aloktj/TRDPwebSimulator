@@ -123,6 +123,30 @@ Json::Value fieldsToJson(const std::map<std::string, FieldValue> &fields) {
     return json;
 }
 
+MdMode parseMdMode(const Json::Value &json)
+{
+    if (!json.isString()) {
+        return MdMode::Notify;
+    }
+    const auto mode = json.asString();
+    if (mode == "Mr") {
+        return MdMode::Request;
+    }
+    if (mode == "Mp") {
+        return MdMode::ReplyNoConfirm;
+    }
+    if (mode == "Mq") {
+        return MdMode::ReplyWithConfirm;
+    }
+    if (mode == "Mc") {
+        return MdMode::Confirm;
+    }
+    if (mode == "Me") {
+        return MdMode::Error;
+    }
+    return MdMode::Notify;
+}
+
 Json::Value telegramToJson(const TelegramDef &telegram, const std::shared_ptr<TelegramRuntime> &runtime) {
     Json::Value json;
     json["comId"] = telegram.comId;
@@ -246,7 +270,30 @@ void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
 
     const auto json = req->getJsonObject();
     std::map<std::string, FieldValue> overrides;
+    std::optional<MdSendOptions> mdOptions;
     if (json) {
+        if (telegram->type == TelegramType::MD) {
+            MdSendOptions opts{};
+            if (json->isMember("mdMode")) {
+                opts.mode = parseMdMode((*json)["mdMode"]);
+            }
+            if (json->isMember("expectedReplies")) {
+                opts.expectedReplies = (*json)["expectedReplies"].asUInt();
+            }
+            if (json->isMember("replyTimeoutMs")) {
+                opts.replyTimeout = std::chrono::milliseconds((*json)["replyTimeoutMs"].asUInt64());
+            }
+            if (json->isMember("confirmTimeoutMs")) {
+                opts.confirmTimeout = std::chrono::milliseconds((*json)["confirmTimeoutMs"].asUInt64());
+            }
+            if (json->isMember("destIp")) {
+                opts.destIp = static_cast<std::uint32_t>((*json)["destIp"].asUInt());
+            }
+            if (json->isMember("destPort")) {
+                opts.destPort = static_cast<std::uint16_t>((*json)["destPort"].asUInt());
+            }
+            mdOptions = opts;
+        }
         for (const auto &memberName : json->getMemberNames()) {
             const auto *fieldDef = dataset->findField(memberName);
             if (fieldDef == nullptr) {
@@ -266,7 +313,7 @@ void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
         }
     }
 
-    const bool success = TrdpEngine::instance().sendTxTelegram(comId, overrides);
+    const bool success = TrdpEngine::instance().sendTxTelegram(comId, overrides, mdOptions);
     auto resp = drogon::HttpResponse::newHttpJsonResponse(Json::Value());
     (*resp->getJsonObject())["ok"] = success;
     if (telegram->direction == Direction::Tx && telegram->type == TelegramType::PD) {
@@ -313,6 +360,26 @@ void TelegramController::stopTelegram(const drogon::HttpRequestPtr &,
         resp->setStatusCode(drogon::k400BadRequest);
     }
     callback(resp);
+}
+
+void TelegramController::simulateMd(const drogon::HttpRequestPtr &req,
+                                    std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                    std::uint32_t comId) {
+    const auto json = req->getJsonObject();
+    if (!json) {
+        callback(drogon::HttpResponse::newHttpResponse());
+        return;
+    }
+    const auto event = (*json)["event"].asString();
+    const auto sessionId = (*json)["session"].asString();
+    std::vector<std::uint8_t> payload;
+    if (json->isMember("payload") && (*json)["payload"].isArray()) {
+        for (const auto &b : (*json)["payload"]) {
+            payload.push_back(static_cast<std::uint8_t>(b.asUInt()));
+        }
+    }
+    TrdpEngine::instance().simulateMdEvent(comId, sessionId, event, payload);
+    callback(drogon::HttpResponse::newHttpJsonResponse(Json::Value()));
 }
 
 } // namespace trdp
