@@ -14,6 +14,10 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace {
 
@@ -68,6 +72,28 @@ std::optional<std::string> readEnv(const char *name) {
         return std::string(value);
     }
     return std::nullopt;
+}
+
+bool portAvailable(std::uint16_t port) {
+    const auto sock = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return true;
+    }
+
+    int reuse = 1;
+    (void)setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+    (void)setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+#endif
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    const bool available = ::bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0;
+    ::close(sock);
+    return available;
 }
 
 void printUsage(const char *exe) {
@@ -294,6 +320,13 @@ int main(int argc, char **argv) {
     if (opts.showHelp) {
         printUsage(argv[0]);
         return 0;
+    }
+
+    if (!portAvailable(opts.port)) {
+        std::cerr << "Port " << opts.port
+                  << " is already in use. Choose a different port with --port or by setting PORT/DROGON_PORT."
+                  << std::endl;
+        return 1;
     }
 
     if (!opts.xmlPath.empty()) {
