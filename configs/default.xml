@@ -35,6 +35,40 @@
       <variable name="Data" type="BYTES" size="14" offset="8" description="Opaque response data" />
       <variable name="TailMarker" type="UINT16" offset="22" description="Static marker for parsing validation" />
     </dataset>
+
+    <dataset name="MdCommandRequest" id="105" size="32" description="Extended MD request payload for command execution">
+      <variable name="RequestId" type="UINT32" offset="0" description="Unique request identifier" />
+      <variable name="CommandCode" type="UINT16" offset="4" description="Requested command code" />
+      <variable name="Sequence" type="UINT16" offset="6" description="Sequence number for correlation" />
+      <variable name="PayloadLength" type="UINT16" offset="8" description="Number of valid payload bytes" />
+      <variable name="Payload" type="BYTES" size="20" offset="10" description="Opaque command payload" />
+      <variable name="Checksum" type="UINT16" offset="30" description="CRC16 over command content" />
+    </dataset>
+
+    <dataset name="MdCommandReply" id="106" size="28" description="Reply payload for extended MD commands">
+      <variable name="RequestId" type="UINT32" offset="0" description="Echoed command identifier" />
+      <variable name="ReplyCode" type="UINT16" offset="4" description="Result of the command" />
+      <variable name="DataLength" type="UINT16" offset="6" description="Number of valid data bytes" />
+      <variable name="Data" type="BYTES" size="18" offset="8" description="Opaque reply content" />
+      <variable name="TailMarker" type="UINT16" offset="26" description="Static marker for reply validation" />
+    </dataset>
+
+    <dataset name="MdCommandConfirm" id="107" size="16" description="Confirmation payload sent after MD reply reception">
+      <variable name="RequestId" type="UINT32" offset="0" description="Command identifier being confirmed" />
+      <variable name="ConfirmCode" type="UINT16" offset="4" description="Confirmation status code" />
+      <variable name="Flags" type="UINT16" offset="6" description="Confirmation flags" />
+      <variable name="TimestampMs" type="UINT32" offset="8" description="Local timestamp for confirm generation" />
+      <variable name="Reserved" type="BYTES" size="4" offset="12" description="Padding for alignment" />
+    </dataset>
+
+    <dataset name="MdCommandError" id="108" size="20" description="Error payload to surface MD failures">
+      <variable name="RequestId" type="UINT32" offset="0" description="Associated command identifier" />
+      <variable name="ErrorCode" type="UINT16" offset="4" description="Error code for failure" />
+      <variable name="Severity" type="UINT8" offset="6" description="Severity indicator" />
+      <variable name="RetryAllowed" type="UINT8" offset="7" description="Flag showing whether retry is allowed" />
+      <variable name="InfoLength" type="UINT16" offset="8" description="Length of diagnostic info" />
+      <variable name="Info" type="BYTES" size="10" offset="10" description="Diagnostic information payload" />
+    </dataset>
   </datasets>
 
   <telegrams>
@@ -49,5 +83,10 @@
 
     <telegram name="MdMaintenanceRequest" comId="2001" direction="TX" type="MD" dataset="MdRequest" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD request covering message data path" />
     <telegram name="MdMaintenanceResponse" comId="2002" direction="RX" type="MD" dataset="MdResponse" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD response used to verify MD parsing" />
+
+    <telegram name="MdCommandRequestTx" comId="2101" direction="TX" type="MD" dataset="MdCommandRequest" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD command request with extended payload" />
+    <telegram name="MdCommandReplyRx" comId="2102" direction="RX" type="MD" dataset="MdCommandReply" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD command reply counterpart" />
+    <telegram name="MdCommandConfirmTx" comId="2103" direction="TX" type="MD" dataset="MdCommandConfirm" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD confirmation after command reply" />
+    <telegram name="MdCommandErrorRx" comId="2104" direction="RX" type="MD" dataset="MdCommandError" ttl="64" port="17224" srcIp="127.0.0.1" destIp="127.0.0.1" description="MD error frame for failed commands" />
   </telegrams>
 </TrdpConfiguration>
