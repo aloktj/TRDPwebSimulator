@@ -1113,7 +1113,7 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
             TRDP_TIME_T interval{};
             TRDP_FDS_T readFds{};
             TRDP_FDS_T writeFds{};
-            INT32 noDesc = 0;
+            TRDP_SOCK_T noDesc = 0;
             TRDP_ERR_T err = tlc_getInterval(session, &interval, &readFds, &noDesc);
             if (err != TRDP_NO_ERR) {
                 err = tlp_getInterval(session, &interval, &writeFds, &noDesc);
@@ -1304,9 +1304,12 @@ bool TrdpEngine::initialiseDnr() {
 
 void TrdpEngine::initialiseEcsp() {
 #if defined(TRDP_STACK_PRESENT) && defined(TRDP_HAS_TAU_ECSP)
-    TRDP_ECSPCTRL_CONFIG_T ecspConfig{};
-    ecspConfig.confirmTimeout = static_cast<UINT32>(config.ecspConfig.confirmTimeout.count());
-    const TRDP_ERR_T initErr = tau_initEcspCtrl(&ecspConfig);
+    TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
+    if (session == nullptr) {
+        return;
+    }
+
+    const TRDP_ERR_T initErr = tau_initEcspCtrl(session, toTrdpIp(resolvedSessionIp));
     if (initErr != TRDP_NO_ERR) {
         logConfigError("tau_initEcspCtrl", initErr);
         return;
@@ -1321,10 +1324,14 @@ void TrdpEngine::updateEcspControl() {
     if (!ecspInitialised) {
         return;
     }
-    TRDP_ECSPCTRL_PARMS_T parms{};
-    parms.enable = config.ecspConfig.enable ? TRUE : FALSE;
-    parms.confirmTimeout = static_cast<UINT32>(config.ecspConfig.confirmTimeout.count());
-    const TRDP_ERR_T setErr = tau_setEcspCtrl(&parms);
+    TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
+    if (session == nullptr) {
+        return;
+    }
+
+    TRDP_ECSP_CTRL_T ctrl{};
+    ctrl.ecspState = config.ecspConfig.enable ? 1U : 0U;
+    const TRDP_ERR_T setErr = tau_setEcspCtrl(session, &ctrl);
     if (setErr != TRDP_NO_ERR) {
         logConfigError("tau_setEcspCtrl", setErr);
     }
@@ -1343,8 +1350,13 @@ void TrdpEngine::pollEcspStatus() {
         return;
     }
     lastPoll = now;
+    TRDP_APP_SESSION_T session = pdSessionInitialised ? defaultPdSession() : defaultMdSession();
+    if (session == nullptr) {
+        return;
+    }
+
     TRDP_ECSPCTRL_STAT_T status{};
-    const TRDP_ERR_T statErr = tau_getEcspStat(&status);
+    const TRDP_ERR_T statErr = tau_getEcspStat(session, &status, nullptr);
     if (statErr != TRDP_NO_ERR) {
         logConfigError("tau_getEcspStat", statErr);
     }
@@ -1403,7 +1415,7 @@ bool TrdpEngine::processStackOnce(
                 (void)port;
                 const auto *ctx = (firstPd && pdContext) ? pdContext : nullptr;
                 TRDP_FDS_T pdFds = ctx ? ctx->readFds : TRDP_FDS_T{};
-                INT32 pdDesc = ctx ? ctx->maxFd : 0;
+                INT32 pdDesc = ctx ? ctx->readyCount : 0;
                 const TRDP_ERR_T pdErr = tlc_process(session, ctx ? &pdFds : nullptr, ctx ? &pdDesc : nullptr);
                 if (pdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] tlc_process (PD) failed: " << pdErr << std::endl;
@@ -1417,7 +1429,7 @@ bool TrdpEngine::processStackOnce(
                 (void)port;
                 const auto *ctx = (firstMd && mdContext) ? mdContext : nullptr;
                 TRDP_FDS_T mdFds = ctx ? ctx->readFds : TRDP_FDS_T{};
-                INT32 mdDesc = ctx ? ctx->maxFd : 0;
+                INT32 mdDesc = ctx ? ctx->readyCount : 0;
                 const TRDP_ERR_T mdErr = tlc_process(session, ctx ? &mdFds : nullptr, ctx ? &mdDesc : nullptr);
                 if (mdErr != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] tlc_process (MD) failed: " << mdErr << std::endl;
@@ -2077,10 +2089,11 @@ void TrdpEngine::processingLoop() {
                 timeval tv{};
                 tv.tv_sec = static_cast<time_t>(context.interval.tv_sec);
                 tv.tv_usec = static_cast<suseconds_t>(context.interval.tv_usec);
-                const int rv = select(context.maxFd + 1, &context.readFds, &context.writeFds, nullptr, &tv);
+                const int rv = select(static_cast<int>(context.maxFd) + 1, &context.readFds, &context.writeFds, nullptr, &tv);
                 if (rv < 0 && errno != EINTR) {
                     std::cerr << "[TRDP] select(" << label << ") failed: " << errno << std::endl;
                 }
+                context.readyCount = rv;
             };
 
             StackSelectContext pdActiveContext{};
