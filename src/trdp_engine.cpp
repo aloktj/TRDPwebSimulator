@@ -51,6 +51,59 @@ constexpr bool kDnrCompiledIn = true;
 constexpr bool kDnrCompiledIn = false;
 #endif
 
+std::string mdModeToString(MdMode mode)
+{
+    switch (mode) {
+    case MdMode::Notify:
+        return "Mn";
+    case MdMode::Request:
+        return "Mr";
+    case MdMode::ReplyNoConfirm:
+        return "Mp";
+    case MdMode::ReplyWithConfirm:
+        return "Mq";
+    case MdMode::Confirm:
+        return "Mc";
+    case MdMode::Error:
+        return "Me";
+    }
+    return "Md";
+}
+
+Json::Value fieldValueToJson(const FieldValue &value)
+{
+    Json::Value json;
+    if (std::holds_alternative<std::monostate>(value)) {
+        json = Json::Value();
+    } else if (std::holds_alternative<bool>(value)) {
+        json = std::get<bool>(value);
+    } else if (std::holds_alternative<std::int8_t>(value)) {
+        json = static_cast<int>(std::get<std::int8_t>(value));
+    } else if (std::holds_alternative<std::uint8_t>(value)) {
+        json = static_cast<unsigned int>(std::get<std::uint8_t>(value));
+    } else if (std::holds_alternative<std::int16_t>(value)) {
+        json = static_cast<int>(std::get<std::int16_t>(value));
+    } else if (std::holds_alternative<std::uint16_t>(value)) {
+        json = static_cast<unsigned int>(std::get<std::uint16_t>(value));
+    } else if (std::holds_alternative<std::int32_t>(value)) {
+        json = static_cast<Json::Int64>(std::get<std::int32_t>(value));
+    } else if (std::holds_alternative<std::uint32_t>(value)) {
+        json = static_cast<Json::UInt64>(std::get<std::uint32_t>(value));
+    } else if (std::holds_alternative<float>(value)) {
+        json = std::get<float>(value);
+    } else if (std::holds_alternative<double>(value)) {
+        json = std::get<double>(value);
+    } else if (std::holds_alternative<std::string>(value)) {
+        json = std::get<std::string>(value);
+    } else if (std::holds_alternative<std::vector<std::uint8_t>>(value)) {
+        const auto &bytes = std::get<std::vector<std::uint8_t>>(value);
+        for (const auto b : bytes) {
+            json.append(static_cast<unsigned int>(b));
+        }
+    }
+    return json;
+}
+
 void logDnrUnavailable(const std::string &reason)
 {
     static bool warned = false;
@@ -590,6 +643,128 @@ void TrdpEngine::pruneMdTimeouts(std::chrono::steady_clock::time_point now) {
     }
 }
 #endif
+
+std::string TrdpEngine::allocateMdSessionId(const MdSendOptions &options) const
+{
+    if (!options.correlationHint.empty()) {
+        return options.correlationHint;
+    }
+    const auto counter = mdSessionCounter.fetch_add(1) + 1;
+    std::ostringstream oss;
+    oss << "md-" << counter;
+    return oss.str();
+}
+
+TrdpEngine::MdTimelineState &TrdpEngine::recordMdTimeline(const std::string &sessionId, std::uint32_t comId,
+                                                          const MdSendOptions &options)
+{
+    std::lock_guard lock(mdSessionMtx);
+    auto &state = mdSessions[sessionId];
+    state.sessionId = sessionId;
+    state.comId = comId;
+    state.mode = options.mode;
+    state.expectedReplies = options.expectedReplies;
+    state.sentAt = std::chrono::steady_clock::now();
+    state.replyDeadline = options.replyTimeout.count() > 0 ? state.sentAt + options.replyTimeout
+                                                          : std::chrono::steady_clock::time_point{};
+    state.confirmDeadline = options.confirmTimeout.count() > 0 ? state.sentAt + options.confirmTimeout
+                                                                : std::chrono::steady_clock::time_point{};
+    return state;
+}
+
+void TrdpEngine::notifyMdStatus(const MdTimelineState &state, const std::string &event,
+                                const std::map<std::string, FieldValue> *fields)
+{
+    Json::Value fieldJson(Json::objectValue);
+    if (fields != nullptr) {
+        for (const auto &[name, value] : *fields) {
+            fieldJson[name] = fieldValueToJson(value);
+        }
+    }
+    if (auto *hub = TelegramHub::instance()) {
+        hub->publishMdStatus(state.sessionId, state.comId, event, mdModeToString(state.mode), state.expectedReplies,
+                             state.receivedReplies, state.lastEvent, fieldJson);
+    }
+}
+
+void TrdpEngine::noteMdReply(const std::string &sessionId, std::uint32_t comId,
+                             const std::map<std::string, FieldValue> *fields)
+{
+    std::lock_guard lock(mdSessionMtx);
+    auto it = mdSessions.find(sessionId);
+    if (it == mdSessions.end()) {
+        it = std::find_if(mdSessions.begin(), mdSessions.end(), [comId](const auto &entry) {
+            return entry.second.comId == comId;
+        });
+        if (it == mdSessions.end()) {
+            return;
+        }
+    }
+    auto &state = it->second;
+    ++state.receivedReplies;
+    state.lastEvent = "reply";
+    notifyMdStatus(state, "reply", fields);
+}
+
+void TrdpEngine::noteMdConfirm(const std::string &sessionId, std::uint32_t comId)
+{
+    std::lock_guard lock(mdSessionMtx);
+    auto it = mdSessions.find(sessionId);
+    if (it == mdSessions.end()) {
+        it = std::find_if(mdSessions.begin(), mdSessions.end(), [comId](const auto &entry) {
+            return entry.second.comId == comId;
+        });
+        if (it == mdSessions.end()) {
+            return;
+        }
+    }
+    auto &state = it->second;
+    state.confirmObserved = true;
+    state.lastEvent = "confirm";
+    notifyMdStatus(state, "confirm", nullptr);
+}
+
+void TrdpEngine::noteMdError(const std::string &sessionId, std::uint32_t comId, const std::string &message)
+{
+    std::lock_guard lock(mdSessionMtx);
+    auto it = mdSessions.find(sessionId);
+    if (it == mdSessions.end()) {
+        it = std::find_if(mdSessions.begin(), mdSessions.end(), [comId](const auto &entry) {
+            return entry.second.comId == comId;
+        });
+        if (it == mdSessions.end()) {
+            MdTimelineState orphan{};
+            orphan.sessionId = sessionId.empty() ? allocateMdSessionId(MdSendOptions{}) : sessionId;
+            orphan.comId = comId;
+            orphan.mode = MdMode::Error;
+            orphan.lastEvent = message;
+            it = mdSessions.emplace(orphan.sessionId, orphan).first;
+        }
+    }
+    it->second.lastEvent = message;
+    notifyMdStatus(it->second, "error", nullptr);
+}
+
+void TrdpEngine::reapMdTimeouts(std::chrono::steady_clock::time_point now)
+{
+    std::lock_guard lock(mdSessionMtx);
+    for (auto it = mdSessions.begin(); it != mdSessions.end();) {
+        const auto &state = it->second;
+        const bool replyExpired = state.expectedReplies > state.receivedReplies &&
+                                  state.replyDeadline.time_since_epoch().count() > 0 && now >= state.replyDeadline;
+        const bool confirmExpired = !state.confirmObserved &&
+                                    state.confirmDeadline.time_since_epoch().count() > 0 &&
+                                    now >= state.confirmDeadline;
+
+        if (replyExpired || confirmExpired) {
+            it->second.lastEvent = replyExpired ? "reply-timeout" : "confirm-timeout";
+            notifyMdStatus(it->second, "timeout", nullptr);
+            it = mdSessions.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 TrdpEngine &TrdpEngine::instance() {
     static TrdpEngine engine;
@@ -1524,7 +1699,8 @@ TrdpEngine::EndpointHandle *TrdpEngine::findEndpoint(std::uint32_t comId) {
     return &it->second;
 }
 
-bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields) {
+bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields,
+                                const std::optional<MdSendOptions> &mdOptions) {
     std::unique_lock lock(stateMtx);
     std::optional<bool> txActive;
     std::map<std::string, FieldValue> confirmationFields;
@@ -1539,6 +1715,31 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
             return false;
         }
 
+        MdSendOptions mdConfig{};
+        if (endpoint->def.type == TelegramType::MD) {
+            mdConfig = mdOptions.value_or(MdSendOptions{});
+            if (!mdOptions.has_value()) {
+                mdConfig.mode = endpoint->def.confirmTimeout.count() > 0 || endpoint->def.expectedReplies > 0
+                                    ? MdMode::Request
+                                    : MdMode::Notify;
+            }
+            if (!mdConfig.destIp.has_value()) {
+                mdConfig.destIp = endpoint->def.destIp;
+            }
+            if (!mdConfig.destPort.has_value()) {
+                mdConfig.destPort = endpoint->def.destPort;
+            }
+            if (mdConfig.expectedReplies == 0) {
+                mdConfig.expectedReplies = endpoint->def.expectedReplies;
+            }
+            if (mdConfig.replyTimeout.count() == 0) {
+                mdConfig.replyTimeout = endpoint->def.replyTimeout;
+            }
+            if (mdConfig.confirmTimeout.count() == 0) {
+                mdConfig.confirmTimeout = endpoint->def.confirmTimeout;
+            }
+        }
+
         for (const auto &[name, value] : txFields) {
             endpoint->runtime->setFieldValue(name, value);
         }
@@ -1548,6 +1749,8 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         endpoint->runtime->overwriteBuffer(buffer);
         confirmationFields = mergedFields;
 
+        std::string mdSessionId;
+        MdTimelineState *mdState = nullptr;
         bool sent = false;
         if (endpoint->def.type == TelegramType::MD) {
             if (!endpoint->mdHandleReady) {
@@ -1560,13 +1763,14 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
                 sendParam.ttl = endpoint->def.ttl;
                 applyTelegramQos(endpoint->def, sendParam);
                 applyTelegramPorts(endpoint->def, sendParam);
-                const auto numReplies = static_cast<UINT32>(endpoint->def.expectedReplies);
-                const auto replyTimeout = static_cast<UINT32>(endpoint->def.replyTimeout.count());
-                const auto confirmTimeout = static_cast<UINT32>(endpoint->def.confirmTimeout.count());
+                const auto numReplies = static_cast<UINT32>(mdConfig.expectedReplies);
+                const auto replyTimeout = static_cast<UINT32>(mdConfig.replyTimeout.count());
+                const auto confirmTimeout = static_cast<UINT32>(mdConfig.confirmTimeout.count());
+                const auto destIp = mdConfig.destIp.value_or(endpoint->def.destIp);
                 TRDP_ERR_T err = tlm_request(endpoint->mdSessionHandle, this, mdReceiveCallback, &endpoint->mdSessionId,
-                                             comId, etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp,
-                                             endpoint->def.destIp, numReplies, replyTimeout, confirmTimeout, &sendParam,
-                                             buffer.data(), static_cast<UINT32>(buffer.size()), nullptr, nullptr);
+                                             comId, etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp, destIp,
+                                             numReplies, replyTimeout, confirmTimeout, &sendParam, buffer.data(),
+                                             static_cast<UINT32>(buffer.size()), nullptr, nullptr);
                 if (err != TRDP_NO_ERR) {
                     std::cerr << "[TRDP] tlm_request failed for ComId " << comId << ": " << err << std::endl;
                     return false;
@@ -1575,6 +1779,9 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
             }
 #endif
             std::cout << "[TRDP] MD send ComId=" << comId << " bytes=" << buffer.size() << std::endl;
+            mdSessionId = allocateMdSessionId(mdConfig);
+            mdState = &recordMdTimeline(mdSessionId, comId, mdConfig);
+            mdState->lastEvent = "sent";
             sent = true;
         } else {
             sent = publishPdBuffer(*endpoint, buffer);
@@ -1591,6 +1798,9 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         lock.unlock();
 
         if (sent) {
+            if (mdState != nullptr) {
+                notifyMdStatus(*mdState, "sent", &confirmationFields);
+            }
             if (auto *hub = TelegramHub::instance()) {
                 hub->publishTxConfirmation(comId, confirmationFields, txActive);
             }
@@ -1657,6 +1867,33 @@ void TrdpEngine::handleRxTelegram(std::uint32_t comId, const std::vector<std::ui
 void TrdpEngine::handleRxMdTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload) {
     std::cout << "[TRDP] MD telegram callback ComId=" << comId << " bytes=" << payload.size() << std::endl;
     handleRxTelegram(comId, payload);
+    if (auto *endpoint = findEndpoint(comId)) {
+        const auto fields = endpoint->runtime->snapshotFields();
+        noteMdReply("", comId, &fields);
+    }
+}
+
+void TrdpEngine::simulateMdEvent(std::uint32_t comId, const std::string &sessionId, const std::string &event,
+                                 const std::vector<std::uint8_t> &payload) {
+    if (event == "reply") {
+        if (auto *endpoint = findEndpoint(comId)) {
+            auto fields = endpoint->runtime->snapshotFields();
+            if (!payload.empty()) {
+                decodeFieldsIntoRuntime(endpoint->runtime->dataset(), *endpoint->runtime, payload);
+                fields = endpoint->runtime->snapshotFields();
+            }
+            noteMdReply(sessionId, comId, &fields);
+        }
+    } else if (event == "confirm") {
+        noteMdConfirm(sessionId, comId);
+    } else if (event == "error") {
+        noteMdError(sessionId, comId, "simulated-error");
+    } else if (event == "timeout") {
+        MdTimelineState temp = recordMdTimeline(sessionId.empty() ? allocateMdSessionId(MdSendOptions{}) : sessionId,
+                                               comId, MdSendOptions{});
+        temp.lastEvent = "timeout";
+        notifyMdStatus(temp, "timeout", nullptr);
+    }
 }
 
 std::optional<std::uint32_t> TrdpEngine::uriToIp(const std::string &uri, bool useCache) {
@@ -1828,9 +2065,7 @@ void TrdpEngine::processingLoop() {
         const auto mdContext = mdSessionInitialised ? prepareSelectContext(defaultMdSession()) : std::nullopt;
 #endif
         dispatchCyclicTransmissions(std::chrono::steady_clock::now());
-#ifdef TRDP_STACK_PRESENT
-        pruneMdTimeouts(std::chrono::steady_clock::now());
-#endif
+        reapMdTimeouts(std::chrono::steady_clock::now());
         const auto waitDuration = stackIntervalHint();
 
         // Release the lock while doing any heavier processing or callbacks.

@@ -25,6 +25,18 @@ using TRDP_ERR_T = int;
 
 namespace trdp {
 
+enum class MdMode { Notify, Request, ReplyNoConfirm, ReplyWithConfirm, Confirm, Error };
+
+struct MdSendOptions {
+    MdMode mode{MdMode::Notify};
+    std::uint32_t expectedReplies{0};
+    std::chrono::milliseconds replyTimeout{0};
+    std::chrono::milliseconds confirmTimeout{0};
+    std::optional<std::uint32_t> destIp;
+    std::optional<std::uint16_t> destPort;
+    std::string correlationHint;
+};
+
 /**
  * Minimal TRDP engine wrapper.
  *
@@ -75,7 +87,8 @@ class TrdpEngine {
     [[nodiscard]] bool isRunning() const noexcept { return running.load(); }
 
     // Push updated TX field values to the network. Returns false on failure.
-    bool sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields);
+    bool sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields,
+                        const std::optional<MdSendOptions> &mdOptions = std::nullopt);
 
     // Stop cyclic publishing for a TX PD telegram.
     bool stopTxTelegram(std::uint32_t comId);
@@ -88,6 +101,10 @@ class TrdpEngine {
 
     // Feed a freshly received MD telegram into the registry/runtime.
     void handleRxMdTelegram(std::uint32_t comId, const std::vector<std::uint8_t> &payload);
+
+    // Developer/testing hooks for MD session state.
+    void simulateMdEvent(std::uint32_t comId, const std::string &sessionId, const std::string &event,
+                         const std::vector<std::uint8_t> &payload = {});
 
     // TAU helper wrappers (no-ops when the TRDP stack is not present)
     std::optional<std::uint32_t> uriToIp(const std::string &uri, bool useCache = true);
@@ -147,6 +164,16 @@ class TrdpEngine {
     bool initialiseDnr();
     void initialiseEcsp();
     void updateEcspControl();
+    void reapMdTimeouts(std::chrono::steady_clock::time_point now);
+    std::string allocateMdSessionId(const MdSendOptions &options) const;
+    MdTimelineState &recordMdTimeline(const std::string &sessionId, std::uint32_t comId,
+                                      const MdSendOptions &options);
+    void notifyMdStatus(const MdTimelineState &state, const std::string &event,
+                        const std::map<std::string, FieldValue> *fields = nullptr);
+    void noteMdReply(const std::string &sessionId, std::uint32_t comId,
+                     const std::map<std::string, FieldValue> *fields);
+    void noteMdConfirm(const std::string &sessionId, std::uint32_t comId);
+    void noteMdError(const std::string &sessionId, std::uint32_t comId, const std::string &message);
 
     EndpointHandle *findEndpoint(std::uint32_t comId);
 
@@ -204,6 +231,23 @@ class TrdpEngine {
     friend void mdReceiveCallback(void *refCon, TRDP_APP_SESSION_T session, const TRDP_MD_INFO_T *pInfo, UINT8 *pData,
                                   UINT32 dataSize);
 #endif
+
+    struct MdTimelineState {
+        std::string sessionId;
+        std::uint32_t comId{0};
+        MdMode mode{MdMode::Notify};
+        std::uint32_t expectedReplies{0};
+        std::uint32_t receivedReplies{0};
+        std::chrono::steady_clock::time_point sentAt{};
+        std::chrono::steady_clock::time_point replyDeadline{};
+        std::chrono::steady_clock::time_point confirmDeadline{};
+        bool confirmObserved{false};
+        std::string lastEvent;
+    };
+
+    std::mutex mdSessionMtx;
+    std::map<std::string, MdTimelineState> mdSessions;
+    std::atomic<std::uint64_t> mdSessionCounter{0};
 
     struct CacheEntry {
         using Payload = std::variant<std::uint32_t, std::string, std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>;

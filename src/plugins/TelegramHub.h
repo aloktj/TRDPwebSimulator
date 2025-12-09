@@ -24,6 +24,9 @@ class TelegramHub : public drogon::Plugin<TelegramHub> {
     void publishRxUpdate(std::uint32_t comId, const std::map<std::string, FieldValue> &fields);
     void publishTxConfirmation(std::uint32_t comId, const std::map<std::string, FieldValue> &fields,
                                std::optional<bool> txActive = std::nullopt);
+    void publishMdStatus(const std::string &sessionId, std::uint32_t comId, const std::string &event,
+                         const std::string &mode, std::uint32_t expectedReplies, std::uint32_t receivedReplies,
+                         const std::string &detail = "", const Json::Value &fields = Json::Value());
 
     void sendSnapshot(const drogon::WebSocketConnectionPtr &conn);
 

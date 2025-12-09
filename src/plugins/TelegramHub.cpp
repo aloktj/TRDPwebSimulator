@@ -99,6 +99,26 @@ void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std:
     broadcast(payload);
 }
 
+void TelegramHub::publishMdStatus(const std::string &sessionId, std::uint32_t comId, const std::string &event,
+                                  const std::string &mode, std::uint32_t expectedReplies,
+                                  std::uint32_t receivedReplies, const std::string &detail, const Json::Value &fields) {
+    Json::Value payload;
+    payload["type"] = "md";
+    payload["session"] = sessionId;
+    payload["comId"] = comId;
+    payload["event"] = event;
+    payload["mode"] = mode;
+    payload["expectedReplies"] = static_cast<Json::UInt64>(expectedReplies);
+    payload["receivedReplies"] = static_cast<Json::UInt64>(receivedReplies);
+    if (!detail.empty()) {
+        payload["detail"] = detail;
+    }
+    if (!fields.isNull()) {
+        payload["fields"] = fields;
+    }
+    broadcast(payload);
+}
+
 void TelegramHub::sendSnapshot(const drogon::WebSocketConnectionPtr &conn) {
     if (!ensureRegistryInitialized()) {
         Json::Value error;

@@ -62,6 +62,53 @@
     </section>
   </main>
 
+  <div id="md-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Send MD Telegram</h3>
+        <button id="md-close" class="icon-button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <label>Mode</label>
+          <div id="md-mode-options" class="pill-group">
+            <label><input type="radio" name="md-mode" value="Mn" checked /> Mn (Notify)</label>
+            <label><input type="radio" name="md-mode" value="Mr" /> Mr (Request)</label>
+            <label><input type="radio" name="md-mode" value="Mp" /> Mp (Reply)</label>
+            <label><input type="radio" name="md-mode" value="Mq" /> Mq (Reply+Confirm)</label>
+            <label><input type="radio" name="md-mode" value="Mc" /> Mc (Confirm)</label>
+            <label><input type="radio" name="md-mode" value="Me" /> Me (Error)</label>
+          </div>
+          <label for="md-expected">Expected replies</label>
+          <input id="md-expected" type="number" min="0" value="0" />
+          <label for="md-reply-timeout">Reply timeout (ms)</label>
+          <input id="md-reply-timeout" type="number" min="0" value="0" />
+          <label for="md-confirm-timeout">Confirm timeout (ms)</label>
+          <input id="md-confirm-timeout" type="number" min="0" value="0" />
+          <label for="md-dest-ip">Destination IP override</label>
+          <input id="md-dest-ip" type="text" placeholder="Optional integer" />
+          <label for="md-dest-port">Destination port</label>
+          <input id="md-dest-port" type="number" min="0" value="0" />
+        </div>
+        <div class="timeline">
+          <div class="timeline-header">
+            <h4>Live Status</h4>
+            <div class="pill-group">
+              <button id="md-sim-reply" class="secondary">Simulate Reply</button>
+              <button id="md-sim-confirm" class="secondary">Simulate Confirm</button>
+              <button id="md-sim-error" class="secondary">Simulate Error</button>
+            </div>
+          </div>
+          <ul id="md-timeline"></ul>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="md-send" class="primary">Send</button>
+        <button id="md-cancel" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
