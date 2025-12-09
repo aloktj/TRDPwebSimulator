@@ -31,6 +31,12 @@ const mdReplyTimeout = document.querySelector('#md-reply-timeout');
 const mdConfirmTimeout = document.querySelector('#md-confirm-timeout');
 const mdDestIp = document.querySelector('#md-dest-ip');
 const mdDestPort = document.querySelector('#md-dest-port');
+const mdProtocol = document.querySelector('#md-protocol');
+const mdPayloadSize = document.querySelector('#md-payload-size');
+const mdCallerThrottle = document.querySelector('#md-caller-throttle');
+const mdReplierThrottle = document.querySelector('#md-replier-throttle');
+const mdToggleReplyConfirm = document.querySelector('#md-toggle-reply-confirm');
+const mdMulticastReplies = document.querySelector('#md-multicast-replies');
 
 refreshBtn.addEventListener('click', () => loadTelegrams());
 saveBtn.addEventListener('click', () => persistFields());
@@ -50,6 +56,14 @@ mdCloseBtn.addEventListener('click', () => closeMdModal());
 mdSimReply.addEventListener('click', () => simulateMd('reply'));
 mdSimConfirm.addEventListener('click', () => simulateMd('confirm'));
 mdSimError.addEventListener('click', () => simulateMd('error'));
+mdProtocol.addEventListener('change', () => {
+  if (mdProtocol.value === 'udp-multicast') {
+    mdMulticastReplies.checked = true;
+    if (!mdExpected.value || Number(mdExpected.value) === 0) {
+      mdExpected.value = '2';
+    }
+  }
+});
 
 function showStatus(message, kind = 'info') {
   statusEl.textContent = message;
@@ -68,6 +82,17 @@ function formatDisplayValue(value) {
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (value === null || value === undefined) return '';
   return value;
+}
+
+function formatPayloadSize(bytes) {
+  if (!bytes) return '';
+  if (bytes >= 1024 && bytes % 1024 === 0) {
+    return `${bytes / 1024} kB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} kB`;
+  }
+  return `${bytes} B`;
 }
 
 function formatFieldsForDisplay(fields) {
@@ -330,6 +355,12 @@ function collectMdOptions() {
     confirmTimeoutMs: Number(mdConfirmTimeout.value || 0),
     destIp: mdDestIp.value ? Number(mdDestIp.value) : undefined,
     destPort: Number(mdDestPort.value || 0) || undefined,
+    protocol: mdProtocol.value,
+    payloadBytes: Number(mdPayloadSize.value || 0),
+    callerThrottle: mdCallerThrottle.checked,
+    replierThrottle: mdReplierThrottle.checked,
+    toggleReplyConfirm: mdToggleReplyConfirm.checked,
+    multicastReplies: mdMulticastReplies.checked,
   };
 }
 
@@ -487,6 +518,10 @@ function handleUpdate(message) {
 function handleMdEvent(message) {
   if (!message || !message.session) return;
   const existing = state.mdSessions.get(message.session) || { comId: message.comId, events: [], mode: message.mode };
+  existing.mode = message.mode || existing.mode;
+  if (message.options) {
+    existing.options = { ...(existing.options || {}), ...message.options };
+  }
   const timestamp = new Date().toLocaleTimeString();
   existing.events.push({
     event: message.event,
@@ -512,16 +547,40 @@ function renderMdTimeline() {
     const session = state.mdSessions.get(sessionId);
     if (!session) return;
     const header = document.createElement('li');
-    header.innerHTML = `<div><strong>${sessionId}</strong> <span class="muted-pill">${session.mode || ''}</span></div>`;
     header.classList.add('muted');
+    const title = document.createElement('div');
+    title.innerHTML = `<strong>${sessionId}</strong> <span class="muted-pill">${session.mode || ''}</span>`;
+    header.appendChild(title);
+    const metaParts = [];
+    const options = session.options || {};
+    if (options.protocol) metaParts.push(options.protocol);
+    const payloadLabel = formatPayloadSize(options.payloadBytes);
+    if (payloadLabel) metaParts.push(payloadLabel);
+    if (options.multicastReplies) metaParts.push('multicast replies');
+    if (options.callerThrottle) metaParts.push('caller throttle');
+    if (options.replierThrottle) metaParts.push('replier throttle');
+    if (options.toggleReplyConfirm) metaParts.push('toggle reply/confirm');
+    if (options.replyTimeoutMs) metaParts.push(`R ${options.replyTimeoutMs}ms`);
+    if (options.confirmTimeoutMs) metaParts.push(`C ${options.confirmTimeoutMs}ms`);
+    if (metaParts.length) {
+      const meta = document.createElement('div');
+      meta.classList.add('muted');
+      meta.textContent = metaParts.join(' • ');
+      header.appendChild(meta);
+    }
     mdTimeline.appendChild(header);
     session.events.slice().reverse().forEach((event) => {
       const item = document.createElement('li');
       const left = document.createElement('div');
       left.textContent = `${event.timestamp} • ${event.event}`;
       const right = document.createElement('div');
-      const detail = event.detail || '';
-      right.textContent = detail;
+      const detailPieces = [];
+      if (event.detail) detailPieces.push(event.detail);
+      if (typeof event.receivedReplies === 'number') {
+        const expected = typeof event.expectedReplies === 'number' ? event.expectedReplies : '0';
+        detailPieces.push(`replies ${event.receivedReplies}/${expected}`);
+      }
+      right.textContent = detailPieces.join(' • ');
       item.appendChild(left);
       item.appendChild(right);
       mdTimeline.appendChild(item);

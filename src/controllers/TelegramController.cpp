@@ -292,6 +292,24 @@ void TelegramController::sendTelegram(const drogon::HttpRequestPtr &req,
             if (json->isMember("destPort")) {
                 opts.destPort = static_cast<std::uint16_t>((*json)["destPort"].asUInt());
             }
+            if (json->isMember("protocol") && (*json)["protocol"].isString()) {
+                opts.protocol = (*json)["protocol"].asString();
+            }
+            if (json->isMember("payloadBytes")) {
+                opts.payloadBytes = (*json)["payloadBytes"].asUInt64();
+            }
+            if (json->isMember("callerThrottle")) {
+                opts.throttleCaller = (*json)["callerThrottle"].asBool();
+            }
+            if (json->isMember("replierThrottle")) {
+                opts.throttleReplier = (*json)["replierThrottle"].asBool();
+            }
+            if (json->isMember("toggleReplyConfirm")) {
+                opts.toggleReplyConfirm = (*json)["toggleReplyConfirm"].asBool();
+            }
+            if (json->isMember("multicastReplies")) {
+                opts.multicastReplies = (*json)["multicastReplies"].asBool();
+            }
             mdOptions = opts;
         }
         for (const auto &memberName : json->getMemberNames()) {

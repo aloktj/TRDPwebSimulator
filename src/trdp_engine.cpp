@@ -669,6 +669,14 @@ TrdpEngine::MdTimelineState &TrdpEngine::recordMdTimeline(const std::string &ses
                                                           : std::chrono::steady_clock::time_point{};
     state.confirmDeadline = options.confirmTimeout.count() > 0 ? state.sentAt + options.confirmTimeout
                                                                 : std::chrono::steady_clock::time_point{};
+    state.replyTimeout = options.replyTimeout;
+    state.confirmTimeout = options.confirmTimeout;
+    state.protocol = options.protocol.empty() ? "udp-unicast" : options.protocol;
+    state.payloadBytes = options.payloadBytes;
+    state.callerThrottled = options.throttleCaller;
+    state.replierThrottled = options.throttleReplier;
+    state.replyConfirmToggle = options.toggleReplyConfirm;
+    state.multicastExpected = options.multicastReplies || options.expectedReplies > 1;
     return state;
 }
 
@@ -681,9 +689,18 @@ void TrdpEngine::notifyMdStatus(const MdTimelineState &state, const std::string 
             fieldJson[name] = fieldValueToJson(value);
         }
     }
+    Json::Value options(Json::objectValue);
+    options["protocol"] = state.protocol;
+    options["payloadBytes"] = static_cast<Json::UInt64>(state.payloadBytes);
+    options["callerThrottle"] = state.callerThrottled;
+    options["replierThrottle"] = state.replierThrottled;
+    options["toggleReplyConfirm"] = state.replyConfirmToggle;
+    options["multicastReplies"] = state.multicastExpected;
+    options["replyTimeoutMs"] = static_cast<Json::UInt64>(state.replyTimeout.count());
+    options["confirmTimeoutMs"] = static_cast<Json::UInt64>(state.confirmTimeout.count());
     if (auto *hub = TelegramHub::instance()) {
         hub->publishMdStatus(state.sessionId, state.comId, event, mdModeToString(state.mode), state.expectedReplies,
-                             state.receivedReplies, state.lastEvent, fieldJson);
+                             state.receivedReplies, state.lastEvent, fieldJson, options);
     }
 }
 
@@ -1769,6 +1786,15 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
                 std::cerr << "[TRDP] MD session not available; drop TX ComId " << comId << std::endl;
                 return false;
             }
+            const auto destIp = mdConfig.destIp.value_or(endpoint->def.destIp);
+            if (mdConfig.protocol.empty()) {
+                const bool multicast = (destIp & 0xf0000000U) == 0xe0000000U;
+                mdConfig.protocol = multicast ? "udp-multicast" : "udp-unicast";
+            }
+            if (mdConfig.payloadBytes == 0) {
+                mdConfig.payloadBytes = buffer.size();
+            }
+            mdConfig.multicastReplies = mdConfig.multicastReplies || mdConfig.expectedReplies > 1;
 #ifdef TRDP_STACK_PRESENT
             if (stackAvailable) {
                 TRDP_SEND_PARAM_T sendParam = TRDP_MD_DEFAULT_SEND_PARAM;
@@ -1778,7 +1804,6 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
                 const auto numReplies = static_cast<UINT32>(mdConfig.expectedReplies);
                 const auto replyTimeout = static_cast<UINT32>(mdConfig.replyTimeout.count());
                 const auto confirmTimeout = static_cast<UINT32>(mdConfig.confirmTimeout.count());
-                const auto destIp = mdConfig.destIp.value_or(endpoint->def.destIp);
                 TRDP_ERR_T err = tlm_request(endpoint->mdSessionHandle, this, mdReceiveCallback, &endpoint->mdSessionId,
                                              comId, etbTopoCounter, opTrainTopoCounter, endpoint->def.srcIp, destIp,
                                              numReplies, replyTimeout, confirmTimeout, &sendParam, buffer.data(),
