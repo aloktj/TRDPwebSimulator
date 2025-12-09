@@ -6,6 +6,7 @@
 #include <drogon/WebSocketConnection.h>
 
 #include <mutex>
+#include <optional>
 #include <set>
 
 namespace trdp {
@@ -21,7 +22,8 @@ class TelegramHub : public drogon::Plugin<TelegramHub> {
     void unsubscribe(const drogon::WebSocketConnectionPtr &conn);
 
     void publishRxUpdate(std::uint32_t comId, const std::map<std::string, FieldValue> &fields);
-    void publishTxConfirmation(std::uint32_t comId, const std::map<std::string, FieldValue> &fields);
+    void publishTxConfirmation(std::uint32_t comId, const std::map<std::string, FieldValue> &fields,
+                               std::optional<bool> txActive = std::nullopt);
 
     void sendSnapshot(const drogon::WebSocketConnectionPtr &conn);
 

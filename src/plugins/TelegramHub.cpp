@@ -87,14 +87,14 @@ void TelegramHub::publishRxUpdate(std::uint32_t comId, const std::map<std::strin
     broadcast(payload);
 }
 
-void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std::string, FieldValue> &fields) {
+void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std::string, FieldValue> &fields,
+                                       std::optional<bool> txActive) {
     Json::Value payload;
     payload["type"] = "tx";
     payload["comId"] = comId;
     payload["fields"] = fieldsToJson(fields);
-    const auto active = TrdpEngine::instance().txPublishActive(comId);
-    if (active.has_value()) {
-        payload["txActive"] = *active;
+    if (txActive.has_value()) {
+        payload["txActive"] = *txActive;
     }
     broadcast(payload);
 }
