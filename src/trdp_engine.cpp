@@ -1279,7 +1279,7 @@ void TrdpEngine::dispatchCyclicTransmissions(std::chrono::steady_clock::time_poi
         if (publishPdBuffer(endpoint, buffer)) {
             endpoint.nextSend = now + endpoint.cycle;
             if (auto *hub = TelegramHub::instance()) {
-                hub->publishTxConfirmation(comId, endpoint.runtime->snapshotFields());
+                hub->publishTxConfirmation(comId, endpoint.runtime->snapshotFields(), endpoint.txCyclicActive);
             }
         } else {
             endpoint.txCyclicActive = false;
@@ -1525,7 +1525,9 @@ TrdpEngine::EndpointHandle *TrdpEngine::findEndpoint(std::uint32_t comId) {
 }
 
 bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string, FieldValue> &txFields) {
-    std::lock_guard lock(stateMtx);
+    std::unique_lock lock(stateMtx);
+    std::optional<bool> txActive;
+    std::map<std::string, FieldValue> confirmationFields;
     try {
         auto *endpoint = findEndpoint(comId);
         if (endpoint == nullptr) {
@@ -1544,6 +1546,7 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
         const auto mergedFields = mergeRuntimeFields(*endpoint->runtime, txFields);
         const auto buffer = encodeFieldsToBuffer(*endpoint->runtime, mergedFields);
         endpoint->runtime->overwriteBuffer(buffer);
+        confirmationFields = mergedFields;
 
         bool sent = false;
         if (endpoint->def.type == TelegramType::MD) {
@@ -1577,15 +1580,20 @@ bool TrdpEngine::sendTxTelegram(std::uint32_t comId, const std::map<std::string,
             sent = publishPdBuffer(*endpoint, buffer);
         }
 
-        if (sent) {
-            if (auto *hub = TelegramHub::instance()) {
-                hub->publishTxConfirmation(comId, mergedFields);
+        if (sent && endpoint->def.type == TelegramType::PD) {
+            if (endpoint->cycle.count() > 0) {
+                endpoint->txCyclicActive = true;
+                endpoint->nextSend = std::chrono::steady_clock::now() + endpoint->cycle;
             }
+            txActive = endpoint->txCyclicActive;
         }
 
-        if (sent && endpoint->def.type == TelegramType::PD && endpoint->cycle.count() > 0) {
-            endpoint->txCyclicActive = true;
-            endpoint->nextSend = std::chrono::steady_clock::now() + endpoint->cycle;
+        lock.unlock();
+
+        if (sent) {
+            if (auto *hub = TelegramHub::instance()) {
+                hub->publishTxConfirmation(comId, confirmationFields, txActive);
+            }
         }
 
         return sent;
