@@ -188,6 +188,34 @@ void encodeSingleValue(const FieldDef &field, const FieldValue &value, std::uint
     }
 }
 
+bool fieldValueMatchesType(const FieldDef &field, const FieldValue &value) {
+    switch (field.type) {
+    case FieldType::BOOL:
+        return std::holds_alternative<bool>(value);
+    case FieldType::INT8:
+        return std::holds_alternative<std::int8_t>(value);
+    case FieldType::UINT8:
+        return std::holds_alternative<std::uint8_t>(value);
+    case FieldType::INT16:
+        return std::holds_alternative<std::int16_t>(value);
+    case FieldType::UINT16:
+        return std::holds_alternative<std::uint16_t>(value);
+    case FieldType::INT32:
+        return std::holds_alternative<std::int32_t>(value);
+    case FieldType::UINT32:
+        return std::holds_alternative<std::uint32_t>(value);
+    case FieldType::FLOAT:
+        return std::holds_alternative<float>(value);
+    case FieldType::DOUBLE:
+        return std::holds_alternative<double>(value);
+    case FieldType::STRING:
+        return std::holds_alternative<std::string>(value);
+    case FieldType::BYTES:
+        return std::holds_alternative<std::vector<std::uint8_t>>(value);
+    }
+    return false;
+}
+
 std::vector<std::uint8_t> encodeFields(const DatasetDef &dataset, const std::map<std::string, FieldValue> &fields) {
     const auto bufferSize = dataset.computeSize();
     std::vector<std::uint8_t> buffer(bufferSize, 0U);
@@ -197,6 +225,11 @@ std::vector<std::uint8_t> encodeFields(const DatasetDef &dataset, const std::map
         if (it == fields.end() || std::holds_alternative<std::monostate>(it->second)) {
             continue;
         }
+        if (!fieldValueMatchesType(field, it->second)) {
+            std::cerr << "[TRDP] Skip encoding field '" << field.name << "' due to type mismatch" << std::endl;
+            continue;
+        }
+
         const auto width = fieldWidth(field);
         if (field.offset + width > buffer.size()) {
             continue;
