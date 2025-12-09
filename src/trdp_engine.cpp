@@ -511,10 +511,10 @@ TRDP_APP_SESSION_T TrdpEngine::defaultPdSession() const {
 }
 
 TRDP_APP_SESSION_T TrdpEngine::defaultMdSession() const {
-    if (mdSessions.empty()) {
+    if (mdAppSessions.empty()) {
         return nullptr;
     }
-    return mdSessions.begin()->second;
+    return mdAppSessions.begin()->second;
 }
 
 TRDP_APP_SESSION_T TrdpEngine::pdSessionForPort(std::uint16_t port) const {
@@ -525,7 +525,7 @@ TRDP_APP_SESSION_T TrdpEngine::pdSessionForPort(std::uint16_t port) const {
 }
 
 TRDP_APP_SESSION_T TrdpEngine::mdSessionForPort(std::uint16_t port) const {
-    if (auto it = mdSessions.find(port); it != mdSessions.end()) {
+    if (auto it = mdAppSessions.find(port); it != mdAppSessions.end()) {
         return it->second;
     }
     return defaultMdSession();
@@ -659,7 +659,7 @@ TrdpEngine::MdTimelineState &TrdpEngine::recordMdTimeline(const std::string &ses
                                                           const MdSendOptions &options)
 {
     std::lock_guard lock(mdSessionMtx);
-    auto &state = mdSessions[sessionId];
+    auto &state = mdTimelineSessions[sessionId];
     state.sessionId = sessionId;
     state.comId = comId;
     state.mode = options.mode;
@@ -708,12 +708,12 @@ void TrdpEngine::noteMdReply(const std::string &sessionId, std::uint32_t comId,
                              const std::map<std::string, FieldValue> *fields)
 {
     std::lock_guard lock(mdSessionMtx);
-    auto it = mdSessions.find(sessionId);
-    if (it == mdSessions.end()) {
-        it = std::find_if(mdSessions.begin(), mdSessions.end(), [comId](const auto &entry) {
+    auto it = mdTimelineSessions.find(sessionId);
+    if (it == mdTimelineSessions.end()) {
+        it = std::find_if(mdTimelineSessions.begin(), mdTimelineSessions.end(), [comId](const auto &entry) {
             return entry.second.comId == comId;
         });
-        if (it == mdSessions.end()) {
+        if (it == mdTimelineSessions.end()) {
             return;
         }
     }
@@ -726,12 +726,12 @@ void TrdpEngine::noteMdReply(const std::string &sessionId, std::uint32_t comId,
 void TrdpEngine::noteMdConfirm(const std::string &sessionId, std::uint32_t comId)
 {
     std::lock_guard lock(mdSessionMtx);
-    auto it = mdSessions.find(sessionId);
-    if (it == mdSessions.end()) {
-        it = std::find_if(mdSessions.begin(), mdSessions.end(), [comId](const auto &entry) {
+    auto it = mdTimelineSessions.find(sessionId);
+    if (it == mdTimelineSessions.end()) {
+        it = std::find_if(mdTimelineSessions.begin(), mdTimelineSessions.end(), [comId](const auto &entry) {
             return entry.second.comId == comId;
         });
-        if (it == mdSessions.end()) {
+        if (it == mdTimelineSessions.end()) {
             return;
         }
     }
@@ -744,18 +744,18 @@ void TrdpEngine::noteMdConfirm(const std::string &sessionId, std::uint32_t comId
 void TrdpEngine::noteMdError(const std::string &sessionId, std::uint32_t comId, const std::string &message)
 {
     std::lock_guard lock(mdSessionMtx);
-    auto it = mdSessions.find(sessionId);
-    if (it == mdSessions.end()) {
-        it = std::find_if(mdSessions.begin(), mdSessions.end(), [comId](const auto &entry) {
+    auto it = mdTimelineSessions.find(sessionId);
+    if (it == mdTimelineSessions.end()) {
+        it = std::find_if(mdTimelineSessions.begin(), mdTimelineSessions.end(), [comId](const auto &entry) {
             return entry.second.comId == comId;
         });
-        if (it == mdSessions.end()) {
+        if (it == mdTimelineSessions.end()) {
             MdTimelineState orphan{};
             orphan.sessionId = sessionId.empty() ? allocateMdSessionId(MdSendOptions{}) : sessionId;
             orphan.comId = comId;
             orphan.mode = MdMode::Error;
             orphan.lastEvent = message;
-            it = mdSessions.emplace(orphan.sessionId, orphan).first;
+            it = mdTimelineSessions.emplace(orphan.sessionId, orphan).first;
         }
     }
     it->second.lastEvent = message;
@@ -765,7 +765,7 @@ void TrdpEngine::noteMdError(const std::string &sessionId, std::uint32_t comId, 
 void TrdpEngine::reapMdTimeouts(std::chrono::steady_clock::time_point now)
 {
     std::lock_guard lock(mdSessionMtx);
-    for (auto it = mdSessions.begin(); it != mdSessions.end();) {
+    for (auto it = mdTimelineSessions.begin(); it != mdTimelineSessions.end();) {
         const auto &state = it->second;
         const bool replyExpired = state.expectedReplies > state.receivedReplies &&
                                   state.replyDeadline.time_since_epoch().count() > 0 && now >= state.replyDeadline;
@@ -776,7 +776,7 @@ void TrdpEngine::reapMdTimeouts(std::chrono::steady_clock::time_point now)
         if (replyExpired || confirmExpired) {
             it->second.lastEvent = replyExpired ? "reply-timeout" : "confirm-timeout";
             notifyMdStatus(it->second, "timeout", nullptr);
-            it = mdSessions.erase(it);
+            it = mdTimelineSessions.erase(it);
         } else {
             ++it;
         }
@@ -996,7 +996,7 @@ bool TrdpEngine::initialiseTrdpStack() {
             }
         }
 
-        mdSessions.emplace(port, session);
+        mdAppSessions.emplace(port, session);
         return true;
     };
 
@@ -1008,7 +1008,7 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
 
     pdSessionInitialised = hasPdTelegrams && !pdSessions.empty();
-    mdSessionInitialised = hasMdTelegrams && !mdSessions.empty();
+    mdSessionInitialised = hasMdTelegrams && !mdAppSessions.empty();
 
     const bool pdStackReady = !hasPdTelegrams || pdSessionInitialised;
     const bool mdStackReady = !hasMdTelegrams || mdSessionInitialised;
@@ -1050,7 +1050,7 @@ bool TrdpEngine::initialiseTrdpStack() {
         (void)tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
         (void)tlc_updateSession(session);
     }
-    for (auto &[port, session] : mdSessions) {
+    for (auto &[port, session] : mdAppSessions) {
         (void)port;
         (void)tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
         (void)tlc_updateSession(session);
@@ -1072,7 +1072,7 @@ bool TrdpEngine::initialiseTrdpStack() {
     }
     if (mdSessionInitialised) {
         std::cout << "[TRDP] MD session handle ready on ports";
-        for (const auto &[port, session] : mdSessions) {
+        for (const auto &[port, session] : mdAppSessions) {
             (void)session;
             std::cout << ' ' << port;
         }
@@ -1090,7 +1090,7 @@ void TrdpEngine::teardownTrdpStack() {
 
     if (stackAvailable) {
 #ifdef TRDP_STACK_PRESENT
-        for (auto &[port, session] : mdSessions) {
+        for (auto &[port, session] : mdAppSessions) {
             tlc_configSession(session, nullptr, nullptr, nullptr, nullptr);
             (void)tlc_closeSession(session);
             (void)port;
@@ -1108,7 +1108,7 @@ void TrdpEngine::teardownTrdpStack() {
         }
         tlc_terminate();
         ecspInitialised = false;
-        mdSessions.clear();
+        mdAppSessions.clear();
         pdSessions.clear();
 #else
         std::cout << "[TRDP] Stack not available; stub teardown" << std::endl;
@@ -1156,7 +1156,7 @@ std::chrono::milliseconds TrdpEngine::stackIntervalHint() const {
             }
         }
         if (mdSessionInitialised) {
-            for (const auto &[port, session] : mdSessions) {
+            for (const auto &[port, session] : mdAppSessions) {
                 (void)port;
                 if (const auto mdInterval = resolveInterval(session)) {
                     if (!minInterval || *mdInterval < *minInterval) {
@@ -1418,7 +1418,7 @@ bool TrdpEngine::processStackOnce(
                 }
             }
             if (mdSessionInitialised) {
-                for (const auto &[port, session] : mdSessions) {
+                for (const auto &[port, session] : mdAppSessions) {
                     (void)port;
                     setTopologyCounters(session);
                 }
@@ -1442,7 +1442,7 @@ bool TrdpEngine::processStackOnce(
         }
         if (mdSessionInitialised) {
             bool firstMd = true;
-            for (const auto &[port, session] : mdSessions) {
+            for (const auto &[port, session] : mdAppSessions) {
                 (void)port;
                 const auto *ctx = (firstMd && mdContext) ? mdContext : nullptr;
                 TRDP_FDS_T mdFds = ctx ? ctx->readFds : TRDP_FDS_T{};
@@ -1504,9 +1504,9 @@ void TrdpEngine::buildEndpoints() {
 
         if (telegram.type == TelegramType::MD) {
             handle.mdSessionHandle = mdSessionForPort(resolvePortForEndpoint(telegram));
-            const bool hasRequestedPort = mdSessions.find(resolvePortForEndpoint(telegram)) != mdSessions.end();
+            const bool hasRequestedPort = mdAppSessions.find(resolvePortForEndpoint(telegram)) != mdAppSessions.end();
             const std::uint16_t boundPort = hasRequestedPort ? resolvePortForEndpoint(telegram)
-                                                             : (mdSessions.empty() ? 0U : mdSessions.begin()->first);
+                                                             : (mdAppSessions.empty() ? 0U : mdAppSessions.begin()->first);
             handle.mdHandleReady = mdSessionInitialised && handle.mdSessionHandle != nullptr;
 #ifdef TRDP_STACK_PRESENT
             std::cout << "[TRDP] MD endpoint selection for ComId " << telegram.comId << " requestedPort="
