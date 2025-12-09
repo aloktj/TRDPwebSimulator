@@ -185,6 +185,14 @@ button:disabled {
   main {
     grid-template-columns: 1fr;
   }
+
+  .modal-body {
+    grid-template-columns: 1fr;
+  }
+
+  #md-timeline {
+    max-height: 200px;
+  }
 }
 
 .modal {
@@ -208,6 +216,9 @@ button:disabled {
   padding: 12px;
   width: min(960px, 95vw);
   box-shadow: 0 14px 42px rgba(0, 0, 0, 0.5);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header,
@@ -220,6 +231,10 @@ button:disabled {
 
 .modal-body {
   margin: 12px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
 }
 
 .form-grid {
@@ -260,6 +275,9 @@ button:disabled {
   margin-top: 12px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .timeline-header {
@@ -271,7 +289,10 @@ button:disabled {
 #md-timeline {
   list-style: none;
   padding: 0;
-  margin: 8px 0 0;
+  margin: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 #md-timeline li {
