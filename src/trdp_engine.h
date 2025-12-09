@@ -172,6 +172,27 @@ class TrdpEngine {
     void initialiseEcsp();
     void updateEcspControl();
     void reapMdTimeouts(std::chrono::steady_clock::time_point now);
+    struct MdTimelineState {
+        std::string sessionId;
+        std::uint32_t comId{0};
+        MdMode mode{MdMode::Notify};
+        std::uint32_t expectedReplies{0};
+        std::uint32_t receivedReplies{0};
+        std::chrono::steady_clock::time_point sentAt{};
+        std::chrono::steady_clock::time_point replyDeadline{};
+        std::chrono::steady_clock::time_point confirmDeadline{};
+        std::chrono::milliseconds replyTimeout{0};
+        std::chrono::milliseconds confirmTimeout{0};
+        bool confirmObserved{false};
+        std::string lastEvent;
+        std::string protocol{"udp-unicast"};
+        std::size_t payloadBytes{0};
+        bool callerThrottled{false};
+        bool replierThrottled{false};
+        bool replyConfirmToggle{false};
+        bool multicastExpected{false};
+    };
+
     std::string allocateMdSessionId(const MdSendOptions &options) const;
     MdTimelineState &recordMdTimeline(const std::string &sessionId, std::uint32_t comId,
                                       const MdSendOptions &options);
@@ -192,7 +213,7 @@ class TrdpEngine {
     std::uint32_t resolvedSessionIp{0};
 #ifdef TRDP_STACK_PRESENT
     std::map<std::uint16_t, TRDP_APP_SESSION_T> pdSessions;
-    std::map<std::uint16_t, TRDP_APP_SESSION_T> mdSessions;
+    std::map<std::uint16_t, TRDP_APP_SESSION_T> mdAppSessions;
     std::vector<UINT8> heapStorage;
     bool dnrInitialised{false};
     bool ecspInitialised{false};
@@ -239,30 +260,9 @@ class TrdpEngine {
                                   UINT32 dataSize);
 #endif
 
-    struct MdTimelineState {
-        std::string sessionId;
-        std::uint32_t comId{0};
-        MdMode mode{MdMode::Notify};
-        std::uint32_t expectedReplies{0};
-        std::uint32_t receivedReplies{0};
-        std::chrono::steady_clock::time_point sentAt{};
-        std::chrono::steady_clock::time_point replyDeadline{};
-        std::chrono::steady_clock::time_point confirmDeadline{};
-        std::chrono::milliseconds replyTimeout{0};
-        std::chrono::milliseconds confirmTimeout{0};
-        bool confirmObserved{false};
-        std::string lastEvent;
-        std::string protocol{"udp-unicast"};
-        std::size_t payloadBytes{0};
-        bool callerThrottled{false};
-        bool replierThrottled{false};
-        bool replyConfirmToggle{false};
-        bool multicastExpected{false};
-    };
-
     std::mutex mdSessionMtx;
-    std::map<std::string, MdTimelineState> mdSessions;
-    std::atomic<std::uint64_t> mdSessionCounter{0};
+    std::map<std::string, MdTimelineState> mdTimelineSessions;
+    mutable std::atomic<std::uint64_t> mdSessionCounter{0};
 
     struct CacheEntry {
         using Payload = std::variant<std::uint32_t, std::string, std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>;
