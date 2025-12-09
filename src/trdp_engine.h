@@ -143,7 +143,8 @@ class TrdpEngine {
     struct StackSelectContext {
         TRDP_FDS_T readFds{};
         TRDP_FDS_T writeFds{};
-        INT32 maxFd{-1};
+        TRDP_SOCK_T maxFd{-1};
+        INT32 readyCount{0};
         TRDP_TIME_T interval{};
         bool valid{false};
     };
