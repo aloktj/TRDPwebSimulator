@@ -34,6 +34,12 @@ struct MdSendOptions {
     std::chrono::milliseconds confirmTimeout{0};
     std::optional<std::uint32_t> destIp;
     std::optional<std::uint16_t> destPort;
+    std::string protocol{"udp-unicast"};
+    std::size_t payloadBytes{0};
+    bool throttleCaller{false};
+    bool throttleReplier{false};
+    bool toggleReplyConfirm{false};
+    bool multicastReplies{false};
     std::string correlationHint;
 };
 
@@ -242,8 +248,16 @@ class TrdpEngine {
         std::chrono::steady_clock::time_point sentAt{};
         std::chrono::steady_clock::time_point replyDeadline{};
         std::chrono::steady_clock::time_point confirmDeadline{};
+        std::chrono::milliseconds replyTimeout{0};
+        std::chrono::milliseconds confirmTimeout{0};
         bool confirmObserved{false};
         std::string lastEvent;
+        std::string protocol{"udp-unicast"};
+        std::size_t payloadBytes{0};
+        bool callerThrottled{false};
+        bool replierThrottled{false};
+        bool replyConfirmToggle{false};
+        bool multicastExpected{false};
     };
 
     std::mutex mdSessionMtx;

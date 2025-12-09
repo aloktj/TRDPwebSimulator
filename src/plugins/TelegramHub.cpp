@@ -101,7 +101,8 @@ void TelegramHub::publishTxConfirmation(std::uint32_t comId, const std::map<std:
 
 void TelegramHub::publishMdStatus(const std::string &sessionId, std::uint32_t comId, const std::string &event,
                                   const std::string &mode, std::uint32_t expectedReplies,
-                                  std::uint32_t receivedReplies, const std::string &detail, const Json::Value &fields) {
+                                  std::uint32_t receivedReplies, const std::string &detail, const Json::Value &fields,
+                                  const Json::Value &options) {
     Json::Value payload;
     payload["type"] = "md";
     payload["session"] = sessionId;
@@ -115,6 +116,9 @@ void TelegramHub::publishMdStatus(const std::string &sessionId, std::uint32_t co
     }
     if (!fields.isNull()) {
         payload["fields"] = fields;
+    }
+    if (!options.isNull()) {
+        payload["options"] = options;
     }
     broadcast(payload);
 }

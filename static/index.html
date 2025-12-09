@@ -79,12 +79,31 @@
             <label><input type="radio" name="md-mode" value="Mc" /> Mc (Confirm)</label>
             <label><input type="radio" name="md-mode" value="Me" /> Me (Error)</label>
           </div>
+          <label for="md-protocol">Protocol</label>
+          <select id="md-protocol">
+            <option value="udp-unicast">UDP unicast</option>
+            <option value="udp-multicast">UDP multicast</option>
+            <option value="tcp">TCP</option>
+          </select>
+          <label for="md-payload-size">Payload size</label>
+          <select id="md-payload-size">
+            <option value="64">64 bytes</option>
+            <option value="32768">32 kB</option>
+          </select>
           <label for="md-expected">Expected replies</label>
           <input id="md-expected" type="number" min="0" value="0" />
           <label for="md-reply-timeout">Reply timeout (ms)</label>
           <input id="md-reply-timeout" type="number" min="0" value="0" />
           <label for="md-confirm-timeout">Confirm timeout (ms)</label>
           <input id="md-confirm-timeout" type="number" min="0" value="0" />
+          <label for="md-caller-throttle">Caller throttling</label>
+          <label class="switch"><input id="md-caller-throttle" type="checkbox" /> Respect caller throttling</label>
+          <label for="md-replier-throttle">Replier throttling</label>
+          <label class="switch"><input id="md-replier-throttle" type="checkbox" /> Respect replier throttling</label>
+          <label for="md-toggle-reply-confirm">Toggle reply/confirm</label>
+          <label class="switch"><input id="md-toggle-reply-confirm" type="checkbox" /> Alternate reply/confirm</label>
+          <label for="md-multicast-replies">Multicast reply matrix</label>
+          <label class="switch"><input id="md-multicast-replies" type="checkbox" /> Expect multicast replies</label>
           <label for="md-dest-ip">Destination IP override</label>
           <input id="md-dest-ip" type="text" placeholder="Optional integer" />
           <label for="md-dest-port">Destination port</label>
