@@ -329,11 +329,6 @@ void logTrdpError(const std::string &context, TRDP_ERR_T err) {
 }
 #endif
 
-std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
-                                               const std::map<std::string, FieldValue> &fields) {
-    return encodeFields(runtime.dataset(), fields);
-}
-
 #ifdef TRDP_STACK_PRESENT
 template <typename T, typename = void> struct has_qos_field : std::false_type {};
 template <typename T> struct has_qos_field<T, std::void_t<decltype(std::declval<T>().qos)>> : std::true_type {};
@@ -390,6 +385,11 @@ static TRDP_DNR_OPTS_T mapDnrMode(TrdpEngine::DnrMode mode) {
 #endif
 
 } // namespace
+
+std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
+                                               const std::map<std::string, FieldValue> &fields) {
+    return encodeFields(runtime.dataset(), fields);
+}
 
 #ifdef TRDP_STACK_PRESENT
 constexpr std::uint16_t kDefaultTrdpPort = 17224;

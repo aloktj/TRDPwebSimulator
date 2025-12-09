@@ -95,10 +95,6 @@ class TrdpEngine {
     std::optional<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> labelToIds(const std::string &label,
                                                                                       bool useCache = true);
 
-    // Encode a set of fields into a TX buffer using the dataset layout in the provided runtime.
-    std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
-                                                   const std::map<std::string, FieldValue> &fields);
-
   private:
     TrdpEngine() = default;
     TrdpEngine(const TrdpEngine &) = delete;
@@ -244,6 +240,10 @@ std::optional<T> TrdpEngine::fetchCached(Map &map, const Key &key) const {
     }
     return std::nullopt;
 }
+
+// Encode a set of fields into a TX buffer using the dataset layout in the provided runtime.
+std::vector<std::uint8_t> encodeFieldsToBuffer(const TelegramRuntime &runtime,
+                                               const std::map<std::string, FieldValue> &fields);
 
 } // namespace trdp
 
