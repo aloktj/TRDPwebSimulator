@@ -214,3 +214,28 @@ if(TRDP_FOUND)
     install(TARGETS trdp_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(TARGETS drogon_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS trdp_web_simulator RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY static/
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/trdpwebsimulator/static
+    FILES_MATCHING
+    PATTERN "*"
+    )
+install(DIRECTORY configs/
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/trdpwebsimulator/configs
+    FILES_MATCHING
+    PATTERN "*.xml"
+    )
+install(FILES README.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+    )
+
+set(CPACK_PACKAGE_NAME "trdpwebsimulator")
+set(CPACK_PACKAGE_VENDOR "TRDPwebSimulator")
+set(CPACK_PACKAGE_CONTACT "maintainers@example.com")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Web-based TRDP simulator built with Drogon")
+set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+include(CPack)
