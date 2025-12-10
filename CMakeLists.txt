@@ -238,4 +238,17 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_GENERATOR "DEB")
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+if(NOT DEFINED CPACK_DEBIAN_PACKAGE_ARCHITECTURE)
+    # Allow overriding the target architecture (e.g., for Raspberry Pi cross-builds)
+    # with CPACK_DEBIAN_PACKAGE_ARCHITECTURE or the DEB_TARGET_ARCH environment
+    # variable. Otherwise, fall back to a best-effort mapping from the configured
+    # CMAKE_SYSTEM_PROCESSOR.
+    if(DEFINED ENV{DEB_TARGET_ARCH})
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "$ENV{DEB_TARGET_ARCH}")
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "armhf")
+    endif()
+endif()
 include(CPack)
