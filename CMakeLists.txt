@@ -214,3 +214,41 @@ if(TRDP_FOUND)
     install(TARGETS trdp_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(TARGETS drogon_config_check RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS trdp_web_simulator RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY static/
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/trdpwebsimulator/static
+    FILES_MATCHING
+    PATTERN "*"
+    )
+install(DIRECTORY configs/
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/trdpwebsimulator/configs
+    FILES_MATCHING
+    PATTERN "*.xml"
+    )
+install(FILES README.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+    )
+
+set(CPACK_PACKAGE_NAME "trdpwebsimulator")
+set(CPACK_PACKAGE_VENDOR "TRDPwebSimulator")
+set(CPACK_PACKAGE_CONTACT "maintainers@example.com")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Web-based TRDP simulator built with Drogon")
+set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+if(NOT DEFINED CPACK_DEBIAN_PACKAGE_ARCHITECTURE)
+    # Allow overriding the target architecture (e.g., for Raspberry Pi cross-builds)
+    # with CPACK_DEBIAN_PACKAGE_ARCHITECTURE or the DEB_TARGET_ARCH environment
+    # variable. Otherwise, fall back to a best-effort mapping from the configured
+    # CMAKE_SYSTEM_PROCESSOR.
+    if(DEFINED ENV{DEB_TARGET_ARCH})
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "$ENV{DEB_TARGET_ARCH}")
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "armhf")
+    endif()
+endif()
+include(CPack)
