@@ -222,6 +222,7 @@ class TrdpEngine {
     TRDP_APP_SESSION_T pdSessionForPort(std::uint16_t port) const;
     TRDP_APP_SESSION_T mdSessionForPort(std::uint16_t port) const;
     std::uint16_t resolvePortForEndpoint(const TelegramDef &telegram) const;
+    void applyTopologyCounters(TRDP_APP_SESSION_T session);
 #endif
     std::uint32_t etbTopoCounter{0};
     std::uint32_t opTrainTopoCounter{0};
