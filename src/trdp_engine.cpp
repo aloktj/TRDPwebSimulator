@@ -935,6 +935,7 @@ bool TrdpEngine::initialiseTrdpStack() {
             logTrdpError("tlc_openSession for PD port " + std::to_string(port), pdErr);
             return false;
         }
+        applyTopologyCounters(session);
         pdSessions.emplace(port, session);
         return true;
     };
@@ -996,6 +997,7 @@ bool TrdpEngine::initialiseTrdpStack() {
             }
         }
 
+        applyTopologyCounters(session);
         mdAppSessions.emplace(port, session);
         return true;
     };
@@ -1264,6 +1266,22 @@ void TrdpEngine::markTopologyChanged() {
     topologyCountersDirty = true;
     std::cout << "[TRDP] Topology change detected; ETB=" << etbTopoCounter
               << " OpTrain=" << opTrainTopoCounter << std::endl;
+}
+
+void TrdpEngine::applyTopologyCounters(TRDP_APP_SESSION_T session) {
+#ifdef TRDP_STACK_PRESENT
+    if (!session) {
+        return;
+    }
+    const TRDP_ERR_T etbErr = tlc_setETBTopoCount(session, etbTopoCounter);
+    const TRDP_ERR_T opErr = tlc_setOpTrainTopoCount(session, opTrainTopoCounter);
+    if (etbErr != TRDP_NO_ERR || opErr != TRDP_NO_ERR) {
+        std::cerr << "[TRDP] Failed to set topology counters during session setup; ETB err=" << etbErr
+                  << " OpTrain err=" << opErr << std::endl;
+    }
+#else
+    (void)session;
+#endif
 }
 
 bool TrdpEngine::publishPdBuffer(EndpointHandle &endpoint, const std::vector<std::uint8_t> &buffer) {
