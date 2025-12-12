@@ -1658,7 +1658,7 @@ bool TrdpEngine::start() {
 
 bool TrdpEngine::start(const TrdpConfig &cfg) {
     std::lock_guard lock(stateMtx);
-    const bool configChanged = !running.load() || config.rxInterface != cfg.rxInterface || config.txInterface != cfg.txInterface ||
+    const bool configChanged = config.rxInterface != cfg.rxInterface || config.txInterface != cfg.txInterface ||
                                config.hostsFile != cfg.hostsFile || config.enableDnr != cfg.enableDnr ||
                                config.dnrMode != cfg.dnrMode || config.cacheConfig.enableUriCache != cfg.cacheConfig.enableUriCache ||
                                config.cacheConfig.uriCacheTtl != cfg.cacheConfig.uriCacheTtl ||
@@ -1679,9 +1679,6 @@ bool TrdpEngine::start(const TrdpConfig &cfg) {
     }
 
     config = cfg;
-    if (configChanged) {
-        markTopologyChanged();
-    }
 #ifdef TRDP_STACK_PRESENT
     stackAvailable = true;
 #else
